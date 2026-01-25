@@ -5,10 +5,10 @@
   "description": "WhatsApp Campaign Manager with Smart Delays and Anti-Ban Protection",
   "main": "dist-electron/main/index.js",
   "author": "Your Company <contact@yourcompany.com>",
-  "homepage": "https://github.com/yourusername/sambad",
+  "homepage": "https://github.com/BINODNAYAK806/sambad",
   "repository": {
     "type": "git",
-    "url": "https://github.com/yourusername/sambad.git"
+    "url": "https://github.com/BINODNAYAK806/sambad.git"
   },
   "license": "MIT",
   "private": true,
@@ -136,8 +136,8 @@
     "publish": [
       {
         "provider": "github",
-        "owner": "yourusername",
-        "repo": "sambad",
+        "owner": "BINODNAYAK806",
+        "repo": "sambad-releases",
         "releaseType": "release"
       }
     ],

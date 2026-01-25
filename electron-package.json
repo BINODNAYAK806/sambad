@@ -109,6 +109,13 @@
         "zip"
       ]
     },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "BINODNAYAK806",
+        "repo": "sambad-releases"
+      }
+    ],
     "win": {
       "target": [
         "nsis",
