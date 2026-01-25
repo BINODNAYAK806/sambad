@@ -6,6 +6,9 @@ import { SidebarProvider } from './contexts/SidebarContext';
 import { AuthProvider } from './contexts/AuthContext';
 
 
+import { WelcomeAnnouncement } from './components/WelcomeAnnouncement';
+
+
 function App() {
   return (
     <ElectronCheck>
@@ -13,6 +16,7 @@ function App() {
         <AuthProvider>
           <SidebarProvider>
             <Router />
+            <WelcomeAnnouncement />
             <Toaster />
           </SidebarProvider>
         </AuthProvider>

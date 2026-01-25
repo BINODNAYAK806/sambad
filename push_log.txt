@@ -1,14 +1,13 @@
-﻿branch 'main' set up to track 'origin/main'.
-git : To https://githu
+﻿git : To https://githu
 b.com/BINODNAYAK806/sa
 mbad.git
 At line:1 char:1
-+ git push -u origin 
-main --force 2>&1 | 
++ git push origin 
+v1.3.0 --force 2>&1 | 
 Out-File push_log.txt 
--Encodin ...
+-Encoding ...
 + ~~~~~~~~~~~~~~~~~~~~
-~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~
     + CategoryInfo    
           : NotSpeci  
   fied: (To https:/   
@@ -19,5 +18,5 @@ ad.git:String) []
    rrorId : NativeCo  
   mmandError
  
- * [new branch]      
-main -> main
+ * [new tag]         
+v1.3.0 -> v1.3.0
