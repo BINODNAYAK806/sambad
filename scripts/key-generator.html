@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sambad Admin Tool</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f4f4f9;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        .card {
+            background: white;
+            padding: 2rem;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            width: 100%;
+            max-width: 400px;
+        }
+        h1 { margin-top: 0; color: #333; font-size: 1.5rem; text-align: center; }
+        label { display: block; margin-bottom: 8px; font-weight: 600; color: #555; }
+        input {
+            width: 100%;
+            padding: 12px;
+            font-size: 16px;
+            border: 2px solid #e1e4e8;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            box-sizing: border-box;
+            text-transform: uppercase;
+            text-align: center;
+            font-family: monospace;
+            letter-spacing: 1px;
+        }
+        input:focus { border-color: #0070f3; outline: none; }
+        button {
+            width: 100%;
+            padding: 14px;
+            background-color: #0070f3;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        button:active { background-color: #0051a2; }
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            background: #e6fffa;
+            border: 1px solid #b2f5ea;
+            border-radius: 6px;
+            text-align: center;
+            display: none;
+        }
+        .result code {
+            display: block;
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: #2c7a7b;
+            margin-top: 5px;
+            font-family: monospace;
+            letter-spacing: 2px;
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>🔐 Admin Unlock Tool</h1>
+        
+        <label for="challenge">Request Code (REQ-....)</label>
+        <input type="text" id="challenge" placeholder="REQ-A1B2" autofocus>
+        
+        <button onclick="generateKey()">Generate Unlock Key</button>
+        
+        <div id="result" class="result">
+            <span>Unlock Key:</span>
+            <code id="output"></code>
+        </div>
+    </div>
+
+    <script>
+        // Secret must match backend
+        const APP_SECRET = 'SAMBAD_CAMPAIGN_MANAGER_SECURE_UNLOCK_KEY_2025';
+
+        async function generateKey() {
+            const challengeInput = document.getElementById('challenge');
+            const resultDiv = document.getElementById('result');
+            const outputCode = document.getElementById('output');
+            
+            const challenge = challengeInput.value.trim();
+            
+            if (!challenge) {
+                alert('Please enter a Request Code');
+                return;
+            }
+
+            try {
+                // HMAC-SHA256 Implementation using Web Crypto API
+                const encoder = new TextEncoder();
+                const keyData = encoder.encode(APP_SECRET);
+                const msgData = encoder.encode(challenge);
+
+                const key = await crypto.subtle.importKey(
+                    'raw', keyData, { name: 'HMAC', hash: 'SHA-256' }, 
+                    false, ['sign']
+                );
+
+                const signature = await crypto.subtle.sign('HMAC', key, msgData);
+                
+                // Convert to Hex
+                const hashArray = Array.from(new Uint8Array(signature));
+                const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+                
+                // Take first 8 chars
+                const unlockKey = 'UNLOCK-' + hashHex.substring(0, 8);
+                
+                outputCode.textContent = unlockKey;
+                resultDiv.style.display = 'block';
+            } catch (err) {
+                console.error(err);
+                alert('Generation failed: ' + err.message);
+            }
+        }
+    </script>
+</body>
+</html>

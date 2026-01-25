@@ -1,0 +1,1028 @@
+import { parentPort } from 'worker_threads';
+// import pkg from 'whatsapp-web.js';
+// const { Client, LocalAuth, MessageMedia } = pkg;
+// import type { Client as ClientType } from 'whatsapp-web.js';
+import QRCode from 'qrcode';
+import { createClient } from '@supabase/supabase-js';
+import * as path from 'path';
+import * as os from 'os';
+import * as fs from 'fs';
+
+import type {
+  WorkerMessage,
+  WorkerResponse,
+  CampaignTask,
+  MessageTask,
+  MessageResult,
+} from './types.js';
+import { pickDelay } from './delayHelper.js';
+
+let client: any | null = null; // Changed from ClientType to any (whatsapp-web.js removed)
+let isClientReady = false;
+let isPaused = false;
+let shouldStop = false;
+let currentCampaign: CampaignTask | null = null;
+let userDataPath: string = os.tmpdir();
+let supabase: any = null;
+let checkpointInterval = 10; // Save checkpoint every 10 messages
+let lastCheckpointIndex = -1;
+
+function sendMessage(response: WorkerResponse): void {
+  if (parentPort) {
+    parentPort.postMessage(response);
+  }
+}
+
+function getChromiumExecutablePath(): string | undefined {
+  // Check if we are in production (packaged app)
+  // In Electron, app.isPackaged is not available in worker threads directly usually, 
+  // but we can check if the code is running from an ASAR.
+  // However, `process.resourcesPath` is reliable in Electron.
+
+  // Note: 'process.resourcesPath' might need to be passed or inferred. 
+  // Standard Electron structure:
+  // Dev: project_root/
+  // Prod (Win): AppName/resources/
+
+  const possiblePaths = [
+    // Production Bundle (Windows)
+    path.join(process.cwd(), 'resources', 'chrome', 'chrome.exe'),
+    // Production Bundle (macOS)
+    path.join(process.cwd(), '..', 'Resources', 'chrome', 'chrome'),
+    // Development Download (created by our script)
+    path.join(process.cwd(), 'chromium', 'chromium-info.json')
+  ];
+
+  for (const pp of possiblePaths) {
+    if (fs.existsSync(pp)) {
+      console.log('[Worker] Found Chromium at:', pp);
+      return pp;
+    }
+  }
+
+  // Logic for development based on our download script
+  try {
+    const devInfoPath = path.join(process.cwd(), 'chromium', 'chromium-info.json');
+    if (fs.existsSync(devInfoPath)) {
+      const info = JSON.parse(fs.readFileSync(devInfoPath, 'utf8'));
+      if (fs.existsSync(info.executablePath)) {
+        console.log('[Worker] Found Dev Chromium:', info.executablePath);
+        return info.executablePath;
+      }
+    }
+  } catch (e) {
+    console.warn('[Worker] Failed to resolve dev chromium:', e);
+  }
+
+  // Fallback to puppeteer's default resolution which might fail if not installed
+  return undefined;
+}
+
+function initializeWhatsAppClient(): void {
+  const authPath = path.join(userDataPath, '.wwebjs_auth');
+  console.log('[Worker] Using auth path:', authPath);
+
+  // Ensure auth directory exists
+  try {
+    if (!fs.existsSync(authPath)) {
+      fs.mkdirSync(authPath, { recursive: true });
+      console.log('[Worker] Created auth directory:', authPath);
+    }
+  } catch (error) {
+    console.error('[Worker] Failed to create auth directory:', error);
+  }
+
+  client = new Client({
+    authStrategy: new LocalAuth({
+      dataPath: authPath,
+    }),
+    puppeteer: {
+      headless: true,
+      executablePath: getChromiumExecutablePath(),
+      args: [
+        '--no-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--disable-software-rasterizer',
+        '--disable-accelerated-2d-canvas',
+        '--no-first-run',
+        '--no-default-browser-check',
+        '--no-zygote',
+        '--single-process',
+        '--disable-extensions',
+        '--disable-plugins',
+        '--hide-scrollbars',
+        '--mute-audio',
+        '--disable-background-timer-throttling',
+        '--disable-backgrounding-occluded-windows',
+        '--disable-renderer-backgrounding',
+        '--window-position=-2400,-2400',
+        '--window-size=1,1',
+      ],
+    },
+    webVersionCache: {
+      type: 'remote',
+      remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html',
+    },
+    authTimeoutMs: 0,
+  });
+
+  client.on('qr', async (qr: string) => {
+    console.log('[Worker] QR Code received');
+    try {
+      // Generate QR code as data URL for display in UI
+      const qrDataUrl = await QRCode.toDataURL(qr, {
+        errorCorrectionLevel: 'M',
+        type: 'image/png',
+        width: 300,
+        margin: 2,
+      });
+      console.log('[Worker] QR Code converted to data URL');
+      sendMessage({
+        type: 'QR_CODE',
+        data: { qrCode: qrDataUrl },
+      });
+    } catch (error) {
+      console.error('[Worker] Failed to generate QR code:', error);
+      sendMessage({
+        type: 'ERROR',
+        data: { error: 'Failed to generate QR code' },
+      });
+    }
+  });
+
+  client.on('ready', () => {
+    console.log('[Worker] WhatsApp client is ready');
+    isClientReady = true;
+    sendMessage({
+      type: 'READY',
+      data: {},
+    });
+  });
+
+  client.on('authenticated', () => {
+    console.log('[Worker] Client authenticated');
+  });
+
+  client.on('auth_failure', (msg: string) => {
+    console.error('[Worker] Authentication failure:', msg);
+    sendMessage({
+      type: 'ERROR',
+      data: { error: `Authentication failed: ${msg}` },
+    });
+  });
+
+  client.on('disconnected', (reason: string) => {
+    console.log('[Worker] Client disconnected:', reason);
+    isClientReady = false;
+    sendMessage({
+      type: 'ERROR',
+      data: { error: `Disconnected: ${reason}` },
+    });
+  });
+
+  client.initialize();
+}
+
+/**
+ * ✅ FIX: Phone number normalization for India-first format
+ * Converts 10-digit numbers to Indian format with +91 prefix
+ *
+ * Examples:
+ * - 8598846108 → 918598846108
+ * - 9876543210 → 919876543210
+ * - +919876543210 → 919876543210
+ * - 14155552671 → 14155552671 (US number preserved)
+ */
+function formatPhoneNumber(phone: string): string {
+  // Remove all non-digit characters
+  let cleaned = phone.replace(/\D/g, '');
+
+  // Remove leading zero if present
+  if (cleaned.startsWith('0')) {
+    cleaned = cleaned.substring(1);
+  }
+
+  // Add +91 for 10-digit numbers (Indian numbers)
+  if (!cleaned.startsWith('91') && cleaned.length === 10) {
+    cleaned = '91' + cleaned;
+  }
+
+  return cleaned;
+}
+
+function resolveTemplateVariables(template: string, variables?: Record<string, string>): string {
+  if (!variables) return template;
+
+  let resolved = template;
+  for (const [key, value] of Object.entries(variables)) {
+    const regex = new RegExp(`{{\\s*${key}\\s*}}`, 'g');
+    resolved = resolved.replace(regex, value);
+  }
+  return resolved;
+}
+
+async function sendWhatsAppMessage(
+  task: MessageTask,
+  campaignId: string,
+  isRetry: boolean = false
+): Promise<MessageResult> {
+  if (!client || !isClientReady) {
+    throw new Error('WhatsApp client is not ready');
+  }
+
+  const { id: messageId, recipientNumber, templateText, variables, mediaAttachments, templateImage } = task;
+
+  try {
+    // ✅ FIX: Use formatPhoneNumber to normalize (adds +91 for Indian numbers)
+    const normalizedNumber = formatPhoneNumber(recipientNumber);
+
+    if (!normalizedNumber || normalizedNumber.length < 10) {
+      throw new Error(`Invalid phone number format: ${recipientNumber}`);
+    }
+
+    console.log(`[Worker] Original: ${recipientNumber} → Normalized: ${normalizedNumber}`);
+
+    // Validate if number is registered on WhatsApp
+    const numberDetails = await client.getNumberId(normalizedNumber);
+
+    if (!numberDetails) {
+      throw new Error(`Phone number ${recipientNumber} is not registered on WhatsApp`);
+    }
+
+    // Use the validated serialized ID
+    const chatId = numberDetails._serialized;
+
+    const messageText = resolveTemplateVariables(templateText, variables);
+
+    // PRIORITY 1: Send template image with personalized message as caption
+    if (templateImage) {
+      console.log(`[Worker] ==================== Template Image Mode ====================`);
+      console.log(`[Worker] Template image:`, JSON.stringify(templateImage, null, 2));
+
+      try {
+        let media: any;
+
+        if (templateImage.url.startsWith('http://') || templateImage.url.startsWith('https://')) {
+          console.log(`[Worker] 📥 Downloading template image from URL: ${templateImage.url}`);
+          media = await MessageMedia.fromUrl(templateImage.url);
+        } else {
+          console.log(`[Worker] 📁 Loading template image from local file: ${templateImage.url}`);
+
+          if (!fs.existsSync(templateImage.url)) {
+            throw new Error(`❌ Template image file not found: ${templateImage.url}`);
+          }
+
+          const stats = fs.statSync(templateImage.url);
+          console.log(`[Worker] 📊 File size: ${stats.size} bytes (${(stats.size / 1024 / 1024).toFixed(2)} MB)`);
+
+          if (stats.size === 0) {
+            throw new Error(`❌ Template image file is empty: ${templateImage.url}`);
+          }
+
+          if (stats.size > 16 * 1024 * 1024) {
+            console.warn(`[Worker] ⚠️  File size exceeds 16MB, WhatsApp may reject it`);
+          }
+
+          const base64Data = fs.readFileSync(templateImage.url, { encoding: 'base64' });
+          console.log(`[Worker] 📦 Base64 data length: ${base64Data.length} characters`);
+
+          const ext = path.extname(templateImage.url).toLowerCase();
+          const mimeTypes: Record<string, string> = {
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.png': 'image/png',
+            '.gif': 'image/gif',
+            '.webp': 'image/webp',
+          };
+          const mimetype = mimeTypes[ext] || 'image/jpeg';
+
+          console.log(`[Worker] 🎯 Detected MIME type: ${mimetype}`);
+
+          media = new MessageMedia(
+            mimetype,
+            base64Data,
+            path.basename(templateImage.url)
+          );
+        }
+
+        console.log(`[Worker] ✅ Template image loaded successfully`);
+        console.log(`[Worker] 📤 Sending template image with caption to ${chatId}`);
+        console.log(`[Worker] 💬 Caption (personalized message): ${messageText}`);
+
+        await client.sendMessage(chatId, media, {
+          caption: messageText,
+        });
+
+        console.log(`[Worker] ✅ ✅ ✅ Template image with caption sent successfully!`);
+      } catch (templateImageError) {
+        console.error(`[Worker] ✗ Failed to send template image:`, templateImageError);
+        throw templateImageError;
+      }
+
+      // If there are also media attachments, send them after the template image
+      if (mediaAttachments && mediaAttachments.length > 0) {
+        console.log(`[Worker] Also sending ${mediaAttachments.length} additional media attachments`);
+        await sleep(2000); // Wait before sending additional media
+
+        for (let i = 0; i < mediaAttachments.length; i++) {
+          const attachment = mediaAttachments[i];
+          try {
+            console.log(`[Worker] Processing additional media ${i + 1}/${mediaAttachments.length}`);
+
+            let media: any;
+            if (attachment.url.startsWith('http://') || attachment.url.startsWith('https://')) {
+              media = await MessageMedia.fromUrl(attachment.url);
+            } else {
+              if (!fs.existsSync(attachment.url)) {
+                throw new Error(`❌ Media file not found: ${attachment.url}`);
+              }
+
+              const base64Data = fs.readFileSync(attachment.url, { encoding: 'base64' });
+              const ext = path.extname(attachment.url).toLowerCase();
+              const mimeTypes: Record<string, string> = {
+                '.jpg': 'image/jpeg',
+                '.jpeg': 'image/jpeg',
+                '.png': 'image/png',
+                '.gif': 'image/gif',
+                '.webp': 'image/webp',
+                '.pdf': 'application/pdf',
+                '.mp4': 'video/mp4',
+                '.mp3': 'audio/mpeg',
+              };
+              const mimetype = mimeTypes[ext] || 'application/octet-stream';
+              media = new MessageMedia(mimetype, base64Data, path.basename(attachment.url));
+            }
+
+            const caption = attachment.caption ? resolveTemplateVariables(attachment.caption, variables) : undefined;
+            await client.sendMessage(chatId, media, { caption });
+            console.log(`[Worker] ✅ Additional media ${i + 1} sent`);
+
+            if (i < mediaAttachments.length - 1) {
+              await sleep(2000);
+            }
+          } catch (mediaError) {
+            console.error(`[Worker] ✗ Failed to send additional media ${i + 1}:`, mediaError);
+          }
+        }
+      }
+    } else if (mediaAttachments && mediaAttachments.length > 0) {
+      const attachmentsToSend = mediaAttachments.slice(0, 10);
+
+      for (let i = 0; i < attachmentsToSend.length; i++) {
+        const attachment = attachmentsToSend[i];
+
+        try {
+          console.log(`[Worker] ==================== Processing media ${i + 1}/${attachmentsToSend.length} ====================`);
+          console.log(`[Worker] Media details:`, JSON.stringify({
+            url: attachment.url,
+            type: attachment.type,
+            filename: attachment.filename,
+            hasCaption: !!attachment.caption
+          }, null, 2));
+
+          let media: any;
+
+          // Check if it's a URL or local file path
+          if (attachment.url.startsWith('http://') || attachment.url.startsWith('https://')) {
+            console.log(`[Worker] 📥 Downloading media from URL: ${attachment.url}`);
+            media = await MessageMedia.fromUrl(attachment.url);
+          } else {
+            console.log(`[Worker] 📁 Loading media from local file: ${attachment.url}`);
+
+            // Verify file exists
+            if (!fs.existsSync(attachment.url)) {
+              throw new Error(`❌ Media file not found: ${attachment.url}`);
+            }
+
+            // Check file size
+            const stats = fs.statSync(attachment.url);
+            console.log(`[Worker] 📊 File size: ${stats.size} bytes (${(stats.size / 1024 / 1024).toFixed(2)} MB)`);
+
+            if (stats.size === 0) {
+              throw new Error(`❌ Media file is empty: ${attachment.url}`);
+            }
+
+            if (stats.size > 16 * 1024 * 1024) {
+              console.warn(`[Worker] ⚠️  File size exceeds 16MB, WhatsApp may reject it`);
+            }
+
+            // Read file with base64 encoding directly (critical!)
+            console.log(`[Worker] 📖 Reading file with base64 encoding...`);
+            const base64Data = fs.readFileSync(attachment.url, { encoding: 'base64' });
+
+            console.log(`[Worker] 📦 Base64 data length: ${base64Data.length} characters`);
+            console.log(`[Worker] 📦 First 50 chars of base64: ${base64Data.substring(0, 50)}...`);
+
+            // Detect MIME type from file extension
+            const ext = path.extname(attachment.url).toLowerCase();
+            const mimeTypes: Record<string, string> = {
+              '.jpg': 'image/jpeg',
+              '.jpeg': 'image/jpeg',
+              '.png': 'image/png',
+              '.gif': 'image/gif',
+              '.webp': 'image/webp',
+              '.pdf': 'application/pdf',
+              '.mp4': 'video/mp4',
+              '.mp3': 'audio/mpeg',
+            };
+            const mimetype = mimeTypes[ext] || 'application/octet-stream';
+
+            console.log(`[Worker] 🎯 Detected MIME type: ${mimetype}`);
+
+            // Create MessageMedia with the data
+            media = new MessageMedia(
+              mimetype,
+              base64Data,
+              path.basename(attachment.url)
+            );
+          }
+
+          // Validate media object
+          console.log(`[Worker] ✅ Media object created:`, {
+            mimetype: media.mimetype,
+            filename: media.filename,
+            hasData: !!media.data,
+            dataLength: media.data ? media.data.length : 0,
+            dataPreview: media.data ? media.data.substring(0, 50) + '...' : 'NO DATA'
+          });
+
+          if (!media.data || media.data.length === 0) {
+            throw new Error(`❌ Media data is empty after loading!`);
+          }
+
+          // Prepare caption with template variables
+          const caption = attachment.caption
+            ? resolveTemplateVariables(attachment.caption, variables)
+            : (i === 0 ? messageText : undefined);
+
+          console.log(`[Worker] 📤 Sending media to ${chatId}`);
+          console.log(`[Worker] 💬 Caption: ${caption || '(no caption)'}`);
+
+          // Send the media with caption
+          await client.sendMessage(chatId, media, {
+            caption: caption,
+          });
+
+          console.log(`[Worker] ✅ ✅ ✅ Media ${i + 1} sent successfully!`);
+
+          // Delay between multiple media sends
+          if (i < attachmentsToSend.length - 1) {
+            console.log(`[Worker] Waiting 2 seconds before next media...`);
+            await sleep(2000);
+          }
+        } catch (mediaError) {
+          console.error(`[Worker] ✗ Failed to send media ${i + 1}:`, mediaError);
+          throw mediaError; // Re-throw to mark message as failed
+        }
+      }
+
+      // Send text message only if first media doesn't have caption
+      if (!attachmentsToSend[0]?.caption && messageText) {
+        console.log(`[Worker] Sending text message separately`);
+        await client.sendMessage(chatId, messageText);
+      }
+    } else {
+      console.log(`[Worker] Sending text-only message`);
+      await client.sendMessage(chatId, messageText);
+    }
+
+    const result: MessageResult = {
+      messageId,
+      recipientNumber,
+      status: 'sent',
+      sentAt: new Date(),
+    };
+
+    await updateMessageStatus(messageId, campaignId, 'sent', null, isRetry);
+
+    return result;
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error(`[Worker] Failed to send message ${messageId}:`, errorMessage);
+
+    await updateMessageStatus(messageId, campaignId, 'failed', errorMessage, isRetry);
+
+    return {
+      messageId,
+      recipientNumber,
+      status: 'failed',
+      error: errorMessage,
+    };
+  }
+}
+
+async function updateMessageStatus(
+  messageId: string,
+  campaignId: string,
+  status: 'sent' | 'failed',
+  error: string | null,
+  isRetry: boolean = false
+): Promise<void> {
+  try {
+    const updateData: any = {
+      status,
+      updated_at: new Date().toISOString(),
+    };
+
+    if (status === 'sent') {
+      updateData.sent_at = new Date().toISOString();
+    }
+
+    if (error) {
+      updateData.error_message = error;
+    }
+
+    if (isRetry) {
+      // Increment retry count
+      const { data: currentMessage } = await supabase
+        .from('campaign_messages')
+        .select('retry_count')
+        .eq('id', messageId)
+        .single();
+
+      if (currentMessage) {
+        updateData.retry_count = (currentMessage.retry_count || 0) + 1;
+        updateData.last_retry_at = new Date().toISOString();
+      }
+    }
+
+    await supabase
+      .from('campaign_messages')
+      .update(updateData)
+      .eq('id', messageId);
+
+    // Log retry attempt if this is a retry
+    if (isRetry) {
+      await supabase
+        .from('message_retry_log')
+        .insert({
+          message_id: messageId,
+          campaign_id: parseInt(campaignId),
+          retry_attempt: updateData.retry_count || 1,
+          error_message: error,
+          retry_at: new Date().toISOString(),
+          status: status,
+        });
+    }
+
+    const { data: stats } = await supabase
+      .from('campaign_messages')
+      .select('status')
+      .eq('campaign_id', campaignId);
+
+    if (stats) {
+      const sentCount = stats.filter((m: any) => m.status === 'sent').length;
+      const failedCount = stats.filter((m: any) => m.status === 'failed').length;
+
+      await supabase
+        .from('campaigns')
+        .update({
+          sent_count: sentCount,
+          failed_count: failedCount,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', campaignId);
+    }
+  } catch (error) {
+    console.error('[Worker] Failed to update message status:', error);
+  }
+}
+
+async function saveCheckpoint(
+  campaignId: string,
+  lastProcessedIndex: number,
+  sentCount: number,
+  failedCount: number
+): Promise<void> {
+  if (!supabase) return;
+
+  try {
+    await supabase
+      .from('campaign_checkpoints')
+      .insert({
+        campaign_id: parseInt(campaignId),
+        last_processed_index: lastProcessedIndex,
+        sent_count: sentCount,
+        failed_count: failedCount,
+        state_data: {
+          timestamp: new Date().toISOString(),
+          paused: isPaused,
+        },
+      });
+
+    await supabase
+      .from('campaigns')
+      .update({
+        last_checkpoint_at: new Date().toISOString(),
+      })
+      .eq('id', campaignId);
+
+    console.log(`[Worker] Checkpoint saved: processed ${lastProcessedIndex + 1} messages`);
+  } catch (error) {
+    console.error('[Worker] Failed to save checkpoint:', error);
+  }
+}
+
+async function loadLastCheckpoint(campaignId: string): Promise<{
+  lastProcessedIndex: number;
+  sentCount: number;
+  failedCount: number;
+} | null> {
+  if (!supabase) return null;
+
+  try {
+    const { data } = await supabase
+      .from('campaign_checkpoints')
+      .select('*')
+      .eq('campaign_id', parseInt(campaignId))
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (data) {
+      console.log(`[Worker] Checkpoint loaded: resuming from index ${data.last_processed_index}`);
+      return {
+        lastProcessedIndex: data.last_processed_index,
+        sentCount: data.sent_count,
+        failedCount: data.failed_count,
+      };
+    }
+  } catch (error) {
+    console.log('[Worker] No checkpoint found, starting from beginning');
+  }
+
+  return null;
+}
+
+async function shouldRetryMessage(
+  messageId: string,
+  campaignId: string
+): Promise<boolean> {
+  if (!supabase) return false;
+
+  try {
+    // Get campaign max_retries setting
+    const { data: campaign } = await supabase
+      .from('campaigns')
+      .select('max_retries')
+      .eq('id', campaignId)
+      .single();
+
+    if (!campaign) return false;
+
+    const maxRetries = campaign.max_retries || 3;
+
+    // Get current retry count for this message
+    const { data: message } = await supabase
+      .from('campaign_messages')
+      .select('retry_count')
+      .eq('id', messageId)
+      .single();
+
+    if (!message) return false;
+
+    const currentRetries = message.retry_count || 0;
+    return currentRetries < maxRetries;
+  } catch (error) {
+    console.error('[Worker] Failed to check retry eligibility:', error);
+    return false;
+  }
+}
+
+async function retryFailedMessage(
+  message: MessageTask,
+  campaignId: string,
+  attempt: number
+): Promise<MessageResult> {
+  // Exponential backoff: 2^attempt seconds (2s, 4s, 8s, etc.)
+  const backoffDelay = Math.min(Math.pow(2, attempt) * 1000, 30000); // Max 30 seconds
+  console.log(`[Worker] Retrying message ${message.id} (attempt ${attempt}) after ${backoffDelay}ms delay`);
+
+  await sleep(backoffDelay);
+
+  return await sendWhatsAppMessage(message, campaignId, true);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function processCampaign(campaign: CampaignTask): Promise<void> {
+  currentCampaign = campaign;
+  const { campaignId, messages, delaySettings } = campaign;
+
+  console.log(`[Worker] Starting campaign ${campaignId} with ${messages.length} messages`);
+
+  let sentCount = 0;
+  let failedCount = 0;
+  let startIndex = 0;
+
+  try {
+    // Check for recovery: load last checkpoint if available
+    const checkpoint = await loadLastCheckpoint(campaignId);
+    if (checkpoint && checkpoint.lastProcessedIndex >= 0) {
+      startIndex = checkpoint.lastProcessedIndex + 1; // Resume from next message
+      sentCount = checkpoint.sentCount;
+      failedCount = checkpoint.failedCount;
+      console.log(`[Worker] Resuming campaign from message ${startIndex + 1}`);
+    } else {
+      // New campaign start
+      await supabase
+        .from('campaigns')
+        .update({
+          status: 'running',
+          started_at: new Date().toISOString(),
+        })
+        .eq('id', campaignId);
+    }
+
+    for (let i = startIndex; i < messages.length; i++) {
+      if (shouldStop) {
+        console.log('[Worker] Campaign stopped by user');
+        break;
+      }
+
+      while (isPaused) {
+        await sleep(1000);
+        if (shouldStop) break;
+      }
+
+      if (shouldStop) break;
+
+      const message = messages[i];
+
+      console.log(`[Worker] Processing message ${i + 1}/${messages.length} to ${message.recipientNumber}`);
+
+      let result = await sendWhatsAppMessage(message, campaignId, false);
+
+      // Retry logic for failed messages
+      if (result.status === 'failed') {
+        const canRetry = await shouldRetryMessage(message.id, campaignId);
+
+        if (canRetry) {
+          console.log(`[Worker] Message failed, checking if retry is allowed...`);
+
+          // Get current retry count to determine attempt number
+          const { data: messageData } = await supabase
+            .from('campaign_messages')
+            .select('retry_count')
+            .eq('id', message.id)
+            .single();
+
+          const retryAttempt = (messageData?.retry_count || 0) + 1;
+          console.log(`[Worker] Retrying message (attempt ${retryAttempt})...`);
+
+          result = await retryFailedMessage(message, campaignId, retryAttempt);
+
+          if (result.status === 'sent') {
+            console.log(`[Worker] Retry successful for message ${message.id}`);
+          } else {
+            console.log(`[Worker] Retry failed for message ${message.id}: ${result.error}`);
+          }
+        }
+      }
+
+      if (result.status === 'sent') {
+        sentCount++;
+      } else {
+        failedCount++;
+      }
+
+      const progress = Math.round(((i + 1) / messages.length) * 100);
+
+      sendMessage({
+        type: 'PROGRESS',
+        data: {
+          campaignId,
+          messageId: result.messageId,
+          recipientNumber: result.recipientNumber,
+          status: result.status,
+          error: result.error,
+          totalMessages: messages.length,
+          sentCount,
+          failedCount,
+          progress,
+        },
+      });
+
+      // Save checkpoint every N messages
+      if ((i + 1) % checkpointInterval === 0 || i === messages.length - 1) {
+        await saveCheckpoint(campaignId, i, sentCount, failedCount);
+        lastCheckpointIndex = i;
+      }
+
+      if (i < messages.length - 1) {
+        const customRange = (delaySettings.minDelay !== undefined && delaySettings.maxDelay !== undefined)
+          ? { min: delaySettings.minDelay, max: delaySettings.maxDelay }
+          : undefined;
+        const delayMs = pickDelay(delaySettings.preset, customRange);
+        console.log(`[Worker] Waiting ${delayMs}ms before next message...`);
+        await sleep(delayMs);
+      }
+    }
+
+    const finalStatus = shouldStop ? 'stopped' : 'completed';
+
+    await supabase
+      .from('campaigns')
+      .update({
+        status: finalStatus,
+        completed_at: new Date().toISOString(),
+      })
+      .eq('id', campaignId);
+
+    sendMessage({
+      type: 'COMPLETE',
+      data: {
+        campaignId,
+        totalMessages: messages.length,
+        sentCount,
+        failedCount,
+      },
+    });
+
+    console.log(`[Worker] Campaign ${finalStatus}: ${sentCount} sent, ${failedCount} failed`);
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error('[Worker] Campaign error:', errorMessage);
+
+    // Save emergency checkpoint before failing
+    if (lastCheckpointIndex >= 0) {
+      await saveCheckpoint(campaignId, lastCheckpointIndex, sentCount, failedCount);
+    }
+
+    await supabase
+      .from('campaigns')
+      .update({
+        status: 'failed',
+        error_message: errorMessage,
+      })
+      .eq('id', campaignId);
+
+    sendMessage({
+      type: 'ERROR',
+      data: {
+        campaignId,
+        error: errorMessage,
+        sentCount,
+        failedCount,
+      },
+    });
+  } finally {
+    currentCampaign = null;
+    shouldStop = false;
+    isPaused = false;
+    lastCheckpointIndex = -1;
+  }
+}
+
+if (parentPort) {
+  parentPort.on('message', async (message: WorkerMessage) => {
+    const { type, payload } = message;
+
+    switch (type) {
+      case 'INITIALIZE':
+        if (payload && 'userDataPath' in payload) {
+          userDataPath = payload.userDataPath;
+          console.log('[Worker] User data path set to:', userDataPath);
+
+          // Support both old (supabaseUrl/supabaseKey) and new (accountId/licenseKey) parameter names
+          const url: string = (('accountId' in payload && typeof payload.accountId === 'string' && payload.accountId) ||
+            ('supabaseUrl' in payload && typeof payload.supabaseUrl === 'string' && payload.supabaseUrl) ||
+            '');
+          const key: string = (('licenseKey' in payload && typeof payload.licenseKey === 'string' && payload.licenseKey) ||
+            ('supabaseKey' in payload && typeof payload.supabaseKey === 'string' && payload.supabaseKey) ||
+            '');
+
+          if (url && key) {
+            try {
+              supabase = createClient(url, key);
+              console.log('[Worker] Supabase client initialized successfully');
+            } catch (error) {
+              console.error('[Worker] Failed to initialize Supabase client:', error);
+              console.log('[Worker] WhatsApp will still work without Supabase');
+            }
+          } else {
+            console.log('[Worker] No credentials provided - WhatsApp will work without cloud sync');
+          }
+
+          initializeWhatsAppClient();
+        }
+        break;
+
+      case 'START_CAMPAIGN':
+        if (payload && 'campaignId' in payload) {
+          if (!client) {
+            initializeWhatsAppClient();
+            await new Promise<void>((resolve) => {
+              const checkReady = setInterval(() => {
+                if (isClientReady) {
+                  clearInterval(checkReady);
+                  resolve();
+                }
+              }, 500);
+            });
+          }
+
+          if (!isClientReady) {
+            sendMessage({
+              type: 'ERROR',
+              data: { error: 'WhatsApp client is not ready' },
+            });
+            return;
+          }
+
+          shouldStop = false;
+          isPaused = false;
+          await processCampaign(payload as CampaignTask);
+        }
+        break;
+
+      case 'PAUSE_CAMPAIGN':
+        isPaused = true;
+        sendMessage({
+          type: 'PAUSED',
+          data: { campaignId: currentCampaign?.campaignId },
+        });
+        if (currentCampaign) {
+          await supabase
+            .from('campaigns')
+            .update({ status: 'paused' })
+            .eq('id', currentCampaign.campaignId);
+        }
+        console.log('[Worker] Campaign paused');
+        break;
+
+      case 'RESUME_CAMPAIGN':
+        isPaused = false;
+        sendMessage({
+          type: 'RESUMED',
+          data: { campaignId: currentCampaign?.campaignId },
+        });
+        if (currentCampaign) {
+          await supabase
+            .from('campaigns')
+            .update({ status: 'running' })
+            .eq('id', currentCampaign.campaignId);
+        }
+        console.log('[Worker] Campaign resumed');
+        break;
+
+      case 'STOP_CAMPAIGN':
+        shouldStop = true;
+        isPaused = false;
+        console.log('[Worker] Stop requested');
+        break;
+
+      case 'DISCONNECT':
+        console.log('[Worker] Disconnecting WhatsApp (preserving session)');
+        try {
+          if (client) {
+            await client.destroy();
+            console.log('[Worker] WhatsApp client destroyed');
+          }
+          client = null;
+          isClientReady = false;
+          console.log('[Worker] WhatsApp disconnected successfully - session preserved');
+        } catch (error) {
+          console.error('[Worker] Error during disconnect:', error);
+        }
+        break;
+
+      case 'LOGOUT':
+        console.log('[Worker] Logging out of WhatsApp (clearing session)');
+        try {
+          if (client && isClientReady) {
+            await client.logout();
+            console.log('[Worker] WhatsApp client logged out');
+          }
+          if (client) {
+            await client.destroy();
+            console.log('[Worker] WhatsApp client destroyed');
+          }
+
+          // Clear session files
+          const authPath = path.join(userDataPath, '.wwebjs_auth');
+          if (fs.existsSync(authPath)) {
+            fs.rmSync(authPath, { recursive: true, force: true });
+            console.log('[Worker] Session files cleared');
+          }
+
+          client = null;
+          isClientReady = false;
+          console.log('[Worker] WhatsApp logged out successfully');
+        } catch (error) {
+          console.error('[Worker] Error during logout:', error);
+        }
+        break;
+
+      default:
+        console.warn('[Worker] Unknown message type:', type);
+    }
+  });
+
+  console.log('[Worker] WhatsApp worker thread started');
+} else {
+  console.error('[Worker] No parentPort available');
+}

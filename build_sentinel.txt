@@ -1,0 +1,12 @@
+
+> wapro@1.2.0 build:electron
+> tsc -p tsconfig.electron.json && tsc -p tsconfig.preload.json && node -e "const fs=require('fs');const p='dist-electron/electron/preload';if(fs.existsSync(p+'/index.js')){fs.renameSync(p+'/index.js',p+'/index.cjs');fs.existsSync(p+'/index.js.map')&&fs.renameSync(p+'/index.js.map',p+'/index.cjs.map')}" && node -e "const fs=require('fs');const path=require('path');const src='electron/worker/SafeWorker.wrapper.cjs';const dest='dist-electron/electron/worker/SafeWorker.wrapper.cjs';fs.mkdirSync(path.dirname(dest),{recursive:true});fs.copyFileSync(src,dest);console.log('Copied SafeWorker.wrapper.cjs to dist-electron');"
+
+electron/main/index.ts(15,30): error TS6307: File 'D:/sam-12/electron/main/sentinel/index.ts' is not listed within the file list of project 'D:/sam-12/tsconfig.electron.json'. Projects must list all files or use an 'include' pattern.
+electron/main/sentinel/api.ts(1,10): error TS2459: Module '"../supabase"' declares 'supabase' locally, but it is not exported.
+electron/main/sentinel/index.ts(3,38): error TS6307: File 'D:/sam-12/electron/main/sentinel/hardware.ts' is not listed within the file list of project 'D:/sam-12/tsconfig.electron.json'. Projects must list all files or use an 'include' pattern.
+electron/main/sentinel/index.ts(4,35): error TS6133: 'clearLicense' is declared but its value is never read.
+electron/main/sentinel/index.ts(4,55): error TS6307: File 'D:/sam-12/electron/main/sentinel/store.ts' is not listed within the file list of project 'D:/sam-12/tsconfig.electron.json'. Projects must list all files or use an 'include' pattern.
+electron/main/sentinel/index.ts(5,49): error TS6307: File 'D:/sam-12/electron/main/sentinel/api.ts' is not listed within the file list of project 'D:/sam-12/tsconfig.electron.json'. Projects must list all files or use an 'include' pattern.
+electron/main/sentinel/index.ts(61,33): error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'string'.
+  Type 'undefined' is not assignable to type 'string'.

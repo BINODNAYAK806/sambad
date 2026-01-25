@@ -1,0 +1,4 @@
+electron/main/ipc.ts(113,23): error TS2304: Cannot find name 'personalizeMessage'.
+electron/main/whatsapp/WhatsAppClient.ts(14,5): error TS6133: 'proto' is declared but its value is never read.
+electron/main/whatsapp/WhatsAppClient.ts(15,5): error TS6133: 'jidNormalizedUser' is declared but its value is never read.
+electron/main/whatsapp/WhatsAppClient.ts(235,19): error TS2488: Type '{ jid: string; exists: unknown; lid: unknown; }[] | undefined' must have a '[Symbol.iterator]()' method that returns an iterator.

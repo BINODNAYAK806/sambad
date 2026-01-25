@@ -1,0 +1,511 @@
+import { parentPort } from 'worker_threads';
+// import pkg from 'whatsapp-web.js';
+// const { Client: ClientClass, LocalAuth } = pkg;
+// import type { Client } from 'whatsapp-web.js';
+import { SessionStore } from './sessionStore.js';
+import { AntiBanManager, DelaySettings, sleep, formatDelay } from './antiBan.js';
+import {
+  sendText,
+  personalizeMessage,
+  validatePhoneNumber,
+  checkNumberRegistered,
+} from './sender.js';
+
+
+interface WorkerMessage {
+  type: string;
+  data?: any;
+}
+
+interface CampaignTask {
+  campaignId: number;
+  campaignName: string;
+  messageTemplate: string;
+  contacts: Array<{
+    id: number;
+    phone: string;
+    name: string;
+    variables?: Record<string, string>;
+  }>;
+  delaySettings: DelaySettings;
+}
+
+interface CampaignProgress {
+  campaignId: number;
+  contactId?: number;
+  contactName?: string;
+  contactPhone?: string;
+  status: 'sent' | 'failed' | 'skipped';
+  error?: string;
+  totalContacts: number;
+  processedContacts: number;
+  sentCount: number;
+  failedCount: number;
+  skippedCount: number;
+  progress: number;
+  remainingQuota?: number;
+}
+
+console.log('[WhatsAppWorker] Worker thread started');
+
+if (!parentPort) {
+  throw new Error('[WhatsAppWorker] This file must be run as a worker thread');
+}
+
+class WhatsAppWorker {
+  private client: any | null = null; // Changed from Client to any (whatsapp-web.js removed)
+  private sessionStore: SessionStore | null = null;
+  private antiBan: AntiBanManager;
+  private isReady: boolean = false;
+  private isAuthenticated: boolean = false;
+  private activeCampaign: CampaignTask | null = null;
+  private campaignPaused: boolean = false;
+  private campaignStopped: boolean = false;
+  private reconnectAttempts: number = 0;
+  private maxReconnectAttempts: number = 5;
+
+  constructor() {
+    this.antiBan = new AntiBanManager();
+    this.setupMessageHandler();
+  }
+
+  private setupMessageHandler(): void {
+    parentPort!.on('message', async (message: WorkerMessage) => {
+      try {
+        await this.handleMessage(message);
+      } catch (error: any) {
+        this.sendError('MESSAGE_HANDLER_ERROR', error.message);
+      }
+    });
+  }
+
+  private async handleMessage(message: WorkerMessage): Promise<void> {
+    switch (message.type) {
+      case 'INIT':
+        await this.initialize(message.data);
+        break;
+
+      case 'START_CAMPAIGN':
+        await this.startCampaign(message.data);
+        break;
+
+      case 'PAUSE_CAMPAIGN':
+        this.pauseCampaign();
+        break;
+
+      case 'RESUME_CAMPAIGN':
+        this.resumeCampaign();
+        break;
+
+      case 'STOP_CAMPAIGN':
+        this.stopCampaign();
+        break;
+
+      case 'LOGOUT':
+        await this.logout();
+        break;
+
+      case 'GET_STATUS':
+        this.sendStatus();
+        break;
+
+      default:
+        console.warn('[WhatsAppWorker] Unknown message type:', message.type);
+    }
+  }
+
+  private async initialize(config: { userDataPath: string }): Promise<void> {
+    try {
+      this.log('info', 'system', 'Initializing WhatsApp client...');
+      this.send('INITIALIZING', { message: 'Initializing WhatsApp client...' });
+
+      this.sessionStore = new SessionStore({
+        userDataPath: config.userDataPath,
+        sessionName: 'sambad-default',
+      });
+
+      const sessionPath = this.sessionStore.getSessionPath();
+      this.log('info', 'system', `Session path: ${sessionPath}`);
+
+      this.client = new ClientClass({
+        authStrategy: new LocalAuth({
+          dataPath: sessionPath,
+        }),
+        puppeteer: {
+          headless: true,
+          args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-accelerated-2d-canvas',
+            '--no-first-run',
+            '--no-zygote',
+            '--disable-gpu',
+          ],
+        },
+      });
+
+      this.setupClientEventHandlers();
+
+      await this.client.initialize();
+
+      this.log('info', 'system', 'WhatsApp client initialized');
+      this.send('INITIALIZED', { message: 'WhatsApp client initialized' });
+    } catch (error: any) {
+      this.log('error', 'system', 'Initialization error', { error: error.message });
+      this.sendError('INIT_ERROR', error.message);
+    }
+  }
+
+  private setupClientEventHandlers(): void {
+    if (!this.client) return;
+
+    this.client.on('qr', (qr: string) => {
+      this.log('info', 'system', 'QR Code received');
+      this.send('QR_CODE', { qr });
+    });
+
+    this.client.on('authenticated', () => {
+      this.log('info', 'system', 'Authenticated successfully');
+      this.isAuthenticated = true;
+      this.reconnectAttempts = 0;
+      this.send('AUTHENTICATED', { message: 'WhatsApp authenticated' });
+    });
+
+    this.client.on('auth_failure', (message: string) => {
+      this.log('error', 'system', 'Authentication failed', { reason: message });
+      this.isAuthenticated = false;
+      this.sendError('AUTH_FAILURE', message);
+    });
+
+    this.client.on('ready', () => {
+      this.log('info', 'system', 'Client is ready');
+      this.isReady = true;
+      this.send('READY', {
+        message: 'WhatsApp client ready',
+        sessionInfo: this.sessionStore?.getSessionInfo(),
+      });
+    });
+
+    this.client.on('disconnected', async (reason: string) => {
+      this.log('warn', 'system', 'Client disconnected', { reason });
+      this.isReady = false;
+      this.isAuthenticated = false;
+      this.send('DISCONNECTED', { reason });
+
+      if (this.reconnectAttempts < this.maxReconnectAttempts) {
+        this.reconnectAttempts++;
+        this.log('info', 'system', `Attempting to reconnect (${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
+        await sleep(5000);
+        try {
+          await this.client?.initialize();
+        } catch (error: any) {
+          this.log('error', 'system', 'Reconnection failed', { error: error.message });
+        }
+      } else {
+        this.log('error', 'system', 'Max reconnection attempts reached');
+        this.sendError('MAX_RECONNECT_ATTEMPTS', 'Failed to reconnect after multiple attempts');
+      }
+    });
+  }
+
+  private async startCampaign(campaign: CampaignTask): Promise<void> {
+    if (!this.isReady || !this.client) {
+      this.sendError('NOT_READY', 'WhatsApp client is not ready');
+      return;
+    }
+
+    if (this.activeCampaign) {
+      this.sendError('CAMPAIGN_ALREADY_RUNNING', 'Another campaign is already running');
+      return;
+    }
+
+    this.activeCampaign = campaign;
+    this.campaignPaused = false;
+    this.campaignStopped = false;
+
+    this.log('info', 'worker', `Starting campaign: ${campaign.campaignName}`, {
+      campaignId: campaign.campaignId,
+      totalContacts: campaign.contacts.length,
+    });
+
+    this.send('CAMPAIGN_STARTED', {
+      campaignId: campaign.campaignId,
+      totalContacts: campaign.contacts.length,
+    });
+
+    await this.executeCampaign(campaign);
+  }
+
+  private async executeCampaign(campaign: CampaignTask): Promise<void> {
+    const totalContacts = campaign.contacts.length;
+    let processedContacts = 0;
+    let sentCount = 0;
+    let failedCount = 0;
+    let skippedCount = 0;
+
+    this.log('info', 'worker', `Executing campaign with ${totalContacts} contacts`);
+
+    for (let i = 0; i < campaign.contacts.length; i++) {
+      if (this.campaignStopped) {
+        this.log('info', 'worker', 'Campaign stopped by user');
+        this.send('CAMPAIGN_STOPPED', {
+          campaignId: campaign.campaignId,
+          processedContacts,
+          sentCount,
+          failedCount,
+          skippedCount,
+        });
+        this.cleanup();
+        return;
+      }
+
+      while (this.campaignPaused) {
+        await sleep(1000);
+        if (this.campaignStopped) {
+          this.send('CAMPAIGN_STOPPED', {
+            campaignId: campaign.campaignId,
+            processedContacts,
+            sentCount,
+            failedCount,
+            skippedCount,
+          });
+          this.cleanup();
+          return;
+        }
+      }
+
+      const contact = campaign.contacts[i];
+
+      if (!this.antiBan.canSendMore()) {
+        this.log('warn', 'worker', 'Daily limit reached, stopping campaign');
+        this.send('CAMPAIGN_STOPPED', {
+          campaignId: campaign.campaignId,
+          reason: 'Daily limit reached',
+          processedContacts,
+          sentCount,
+          failedCount,
+          skippedCount,
+        });
+        this.cleanup();
+        return;
+      }
+
+      if (!validatePhoneNumber(contact.phone)) {
+        this.log('warn', 'worker', `Invalid phone number: ${contact.phone}`);
+        skippedCount++;
+        processedContacts++;
+        this.sendProgress({
+          campaignId: campaign.campaignId,
+          contactId: contact.id,
+          contactName: contact.name,
+          contactPhone: contact.phone,
+          status: 'skipped',
+          error: 'Invalid phone number',
+          totalContacts,
+          processedContacts,
+          sentCount,
+          failedCount,
+          skippedCount,
+          progress: (processedContacts / totalContacts) * 100,
+          remainingQuota: this.antiBan.getRemainingQuota(),
+        });
+        continue;
+      }
+
+      const isRegistered = await checkNumberRegistered(this.client!, contact.phone);
+      if (!isRegistered) {
+        this.log('warn', 'worker', `Number not registered on WhatsApp: ${contact.phone}`);
+        skippedCount++;
+        processedContacts++;
+        this.sendProgress({
+          campaignId: campaign.campaignId,
+          contactId: contact.id,
+          contactName: contact.name,
+          contactPhone: contact.phone,
+          status: 'skipped',
+          error: 'Number not registered on WhatsApp',
+          totalContacts,
+          processedContacts,
+          sentCount,
+          failedCount,
+          skippedCount,
+          progress: (processedContacts / totalContacts) * 100,
+          remainingQuota: this.antiBan.getRemainingQuota(),
+        });
+        continue;
+      }
+
+      const personalizedMessage = personalizeMessage(
+        campaign.messageTemplate,
+        contact.variables || {},
+        contact.name,
+        contact.phone
+      );
+
+      const result = await sendText(this.client!, contact.phone, personalizedMessage);
+
+      if (result.success) {
+        sentCount++;
+        this.antiBan.recordMessageSent();
+        this.log('info', 'worker', `Message sent to ${contact.name} (${contact.phone})`);
+      } else {
+        failedCount++;
+        this.log('error', 'worker', `Failed to send to ${contact.name} (${contact.phone})`, {
+          error: result.error,
+        });
+      }
+
+      processedContacts++;
+
+      this.sendProgress({
+        campaignId: campaign.campaignId,
+        contactId: contact.id,
+        contactName: contact.name,
+        contactPhone: contact.phone,
+        status: result.success ? 'sent' : 'failed',
+        error: result.error,
+        totalContacts,
+        processedContacts,
+        sentCount,
+        failedCount,
+        skippedCount,
+        progress: (processedContacts / totalContacts) * 100,
+        remainingQuota: this.antiBan.getRemainingQuota(),
+      });
+
+      if (i < campaign.contacts.length - 1) {
+        const delay = this.antiBan.computeDelay(campaign.delaySettings);
+        this.log('info', 'worker', `Waiting ${formatDelay(delay)} before next message...`);
+        this.send('DELAY_STARTED', {
+          campaignId: campaign.campaignId,
+          delay,
+          formattedDelay: formatDelay(delay),
+        });
+        await sleep(delay);
+      }
+    }
+
+    this.log('info', 'worker', 'Campaign completed', {
+      totalContacts,
+      processedContacts,
+      sentCount,
+      failedCount,
+      skippedCount,
+    });
+
+    this.send('CAMPAIGN_COMPLETED', {
+      campaignId: campaign.campaignId,
+      totalContacts,
+      processedContacts,
+      sentCount,
+      failedCount,
+      skippedCount,
+    });
+
+    this.cleanup();
+  }
+
+  private pauseCampaign(): void {
+    if (!this.activeCampaign) {
+      this.sendError('NO_ACTIVE_CAMPAIGN', 'No active campaign to pause');
+      return;
+    }
+
+    this.campaignPaused = true;
+    this.log('info', 'worker', 'Campaign paused');
+    this.send('CAMPAIGN_PAUSED', {
+      campaignId: this.activeCampaign.campaignId,
+    });
+  }
+
+  private resumeCampaign(): void {
+    if (!this.activeCampaign) {
+      this.sendError('NO_ACTIVE_CAMPAIGN', 'No active campaign to resume');
+      return;
+    }
+
+    this.campaignPaused = false;
+    this.log('info', 'worker', 'Campaign resumed');
+    this.send('CAMPAIGN_RESUMED', {
+      campaignId: this.activeCampaign.campaignId,
+    });
+  }
+
+  private stopCampaign(): void {
+    if (!this.activeCampaign) {
+      this.sendError('NO_ACTIVE_CAMPAIGN', 'No active campaign to stop');
+      return;
+    }
+
+    this.campaignStopped = true;
+    this.log('info', 'worker', 'Campaign stop requested');
+  }
+
+  private async logout(): Promise<void> {
+    try {
+      if (this.client) {
+        await this.client.logout();
+        await this.client.destroy();
+      }
+
+      if (this.sessionStore) {
+        this.sessionStore.clearSession();
+      }
+
+      this.isReady = false;
+      this.isAuthenticated = false;
+      this.client = null;
+
+      this.log('info', 'system', 'Successfully logged out');
+      this.send('LOGGED_OUT', { message: 'Successfully logged out' });
+    } catch (error: any) {
+      this.log('error', 'system', 'Logout error', { error: error.message });
+      this.sendError('LOGOUT_ERROR', error.message);
+    }
+  }
+
+  private sendStatus(): void {
+    this.send('STATUS', {
+      isReady: this.isReady,
+      isAuthenticated: this.isAuthenticated,
+      hasActiveCampaign: !!this.activeCampaign,
+      campaignPaused: this.campaignPaused,
+      antiBanStats: this.antiBan.getStats(),
+      sessionInfo: this.sessionStore?.getSessionInfo(),
+    });
+  }
+
+  private sendProgress(progress: CampaignProgress): void {
+    this.send('CAMPAIGN_PROGRESS', progress);
+  }
+
+  private send(type: string, data?: any): void {
+    parentPort!.postMessage({ type, data });
+  }
+
+  private sendError(errorType: string, message: string): void {
+    this.log('error', 'worker', `Error: ${errorType}`, { message });
+    this.send('ERROR', { errorType, message });
+  }
+
+  private log(level: string, category: string, message: string, data?: any): void {
+    console.log(`[WhatsAppWorker] [${level}] [${category}] ${message}`, data || '');
+    this.send('LOG', {
+      level,
+      category,
+      message,
+      data,
+    });
+  }
+
+  private cleanup(): void {
+    this.activeCampaign = null;
+    this.campaignPaused = false;
+    this.campaignStopped = false;
+  }
+}
+
+new WhatsAppWorker();
+console.log('[WhatsAppWorker] Worker initialized and ready');
+parentPort!.postMessage({ type: 'WORKER_READY' });

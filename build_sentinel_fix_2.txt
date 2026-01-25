@@ -1,0 +1,5 @@
+
+> wapro@1.2.0 build:electron
+> tsc -p tsconfig.electron.json && tsc -p tsconfig.preload.json && node -e "const fs=require('fs');const p='dist-electron/electron/preload';if(fs.existsSync(p+'/index.js')){fs.renameSync(p+'/index.js',p+'/index.cjs');fs.existsSync(p+'/index.js.map')&&fs.renameSync(p+'/index.js.map',p+'/index.cjs.map')}" && node -e "const fs=require('fs');const path=require('path');const src='electron/worker/SafeWorker.wrapper.cjs';const dest='dist-electron/electron/worker/SafeWorker.wrapper.cjs';fs.mkdirSync(path.dirname(dest),{recursive:true});fs.copyFileSync(src,dest);console.log('Copied SafeWorker.wrapper.cjs to dist-electron');"
+
+Copied SafeWorker.wrapper.cjs to dist-electron

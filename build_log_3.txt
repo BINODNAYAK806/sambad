@@ -1,0 +1,36 @@
+
+> wapro@1.2.0 build:electron
+> tsc -p tsconfig.electron.json && tsc -p tsconfig.preload.json && node -e "const fs=require('fs');const p='dist-electron/electron/preload';if(fs.existsSync(p+'/index.js')){fs.renameSync(p+'/index.js',p+'/index.cjs');fs.existsSync(p+'/index.js.map')&&fs.renameSync(p+'/index.js.map',p+'/index.cjs.map')}" && node -e "const fs=require('fs');const path=require('path');const src='electron/worker/SafeWorker.wrapper.cjs';const dest='dist-electron/electron/worker/SafeWorker.wrapper.cjs';fs.mkdirSync(path.dirname(dest),{recursive:true});fs.copyFileSync(src,dest);console.log('Copied SafeWorker.wrapper.cjs to dist-electron');"
+
+electron/main/whatsapp/WhatsAppClient.ts(287,5): error TS1434: Unexpected keyword or identifier.
+electron/main/whatsapp/WhatsAppClient.ts(287,29): error TS1005: ',' expected.
+electron/main/whatsapp/WhatsAppClient.ts(287,38): error TS1005: ';' expected.
+electron/main/whatsapp/WhatsAppClient.ts(288,16): error TS1003: Identifier expected.
+electron/main/whatsapp/WhatsAppClient.ts(288,21): error TS1005: ',' expected.
+electron/main/whatsapp/WhatsAppClient.ts(288,26): error TS1005: ',' expected.
+electron/main/whatsapp/WhatsAppClient.ts(288,35): error TS1005: ':' expected.
+electron/main/whatsapp/WhatsAppClient.ts(288,39): error TS1005: ',' expected.
+electron/main/whatsapp/WhatsAppClient.ts(290,17): error TS1005: ':' expected.
+electron/main/whatsapp/WhatsAppClient.ts(291,23): error TS1005: ':' expected.
+electron/main/whatsapp/WhatsAppClient.ts(291,51): error TS1005: ',' expected.
+electron/main/whatsapp/WhatsAppClient.ts(292,23): error TS1005: ':' expected.
+electron/main/whatsapp/WhatsAppClient.ts(292,64): error TS1005: ',' expected.
+electron/main/whatsapp/WhatsAppClient.ts(294,20): error TS1003: Identifier expected.
+electron/main/whatsapp/WhatsAppClient.ts(294,29): error TS1005: ',' expected.
+electron/main/whatsapp/WhatsAppClient.ts(294,52): error TS1005: ',' expected.
+electron/main/whatsapp/WhatsAppClient.ts(294,54): error TS1136: Property assignment expected.
+electron/main/whatsapp/WhatsAppClient.ts(309,18): error TS1005: ';' expected.
+electron/main/whatsapp/WhatsAppClient.ts(309,20): error TS1434: Unexpected keyword or identifier.
+electron/main/whatsapp/WhatsAppClient.ts(327,5): error TS1128: Declaration or statement expected.
+electron/main/whatsapp/WhatsAppClient.ts(327,34): error TS1005: ',' expected.
+electron/main/whatsapp/WhatsAppClient.ts(327,43): error TS1005: ';' expected.
+electron/main/whatsapp/WhatsAppClient.ts(327,45): error TS1434: Unexpected keyword or identifier.
+electron/main/whatsapp/WhatsAppClient.ts(340,5): error TS1128: Declaration or statement expected.
+electron/main/whatsapp/WhatsAppClient.ts(340,35): error TS1005: ',' expected.
+electron/main/whatsapp/WhatsAppClient.ts(340,49): error TS1005: ',' expected.
+electron/main/whatsapp/WhatsAppClient.ts(340,55): error TS1005: ';' expected.
+electron/main/whatsapp/WhatsAppClient.ts(341,12): error TS1005: ',' expected.
+electron/main/whatsapp/WhatsAppClient.ts(341,57): error TS1005: ',' expected.
+electron/main/whatsapp/WhatsAppClient.ts(341,59): error TS1136: Property assignment expected.
+electron/main/whatsapp/WhatsAppClient.ts(344,5): error TS1128: Declaration or statement expected.
+electron/main/whatsapp/WhatsAppClient.ts(345,1): error TS1128: Declaration or statement expected.

@@ -1,0 +1,167 @@
+import * as path from 'path';
+import * as fs from 'fs';
+
+export interface ChromiumPaths {
+  resourcesPath?: string;
+  appPath?: string;
+}
+
+export function getChromiumPath(config: ChromiumPaths = {}): string {
+  const isDev = process.env.NODE_ENV === 'development';
+
+  if (isDev) {
+    console.log('[ChromiumHelper] Running in development mode');
+
+    const devPath = path.join(
+      process.cwd(),
+      'node_modules',
+      'puppeteer',
+      '.local-chromium'
+    );
+
+    if (fs.existsSync(devPath)) {
+      const chromeExecutables = findChromiumExecutable(devPath);
+      if (chromeExecutables.length > 0) {
+        console.log('[ChromiumHelper] Found Chromium in dev node_modules:', chromeExecutables[0]);
+        return chromeExecutables[0];
+      }
+    }
+
+    // Check for our custom downloaded chromium
+    try {
+      const infoPath = path.join(process.cwd(), 'chromium', 'chromium-info.json');
+      if (fs.existsSync(infoPath)) {
+        const info = JSON.parse(fs.readFileSync(infoPath, 'utf8'));
+        if (info.executablePath && fs.existsSync(info.executablePath)) {
+          console.log('[ChromiumHelper] Found Chromium via chromium-info.json:', info.executablePath);
+          return info.executablePath;
+        }
+      }
+    } catch (e) {
+      console.warn('[ChromiumHelper] Failed to read chromium-info.json:', e);
+    }
+
+    console.log('[ChromiumHelper] Falling back to system Chrome');
+    return findSystemChrome();
+  }
+
+  console.log('[ChromiumHelper] Running in production mode');
+
+  const resourcesPath = config.resourcesPath || process.resourcesPath || (config.appPath ? config.appPath : process.cwd());
+
+  const possiblePaths = [
+    path.join(resourcesPath, 'chromium'),
+    path.join(resourcesPath, 'app.asar.unpacked', 'chromium'),
+    path.join(resourcesPath, '..', 'chromium'),
+  ];
+
+  for (const basePath of possiblePaths) {
+    if (fs.existsSync(basePath)) {
+      const chromeExecutables = findChromiumExecutable(basePath);
+      if (chromeExecutables.length > 0) {
+        console.log('[ChromiumHelper] Found bundled Chromium:', chromeExecutables[0]);
+        return chromeExecutables[0];
+      }
+    }
+  }
+
+  console.warn('[ChromiumHelper] Bundled Chromium not found, falling back to system Chrome');
+  return findSystemChrome();
+}
+
+function findChromiumExecutable(basePath: string): string[] {
+  const executables: string[] = [];
+
+  const searchPaths = [
+    basePath,
+    path.join(basePath, 'chrome-win'),
+    path.join(basePath, 'chrome-linux'),
+    path.join(basePath, 'chrome-mac'),
+    path.join(basePath, 'Chromium.app', 'Contents', 'MacOS'),
+    path.join(basePath, 'Google Chrome.app', 'Contents', 'MacOS'),
+  ];
+
+  const executableNames = [
+    'chrome.exe',
+    'chrome',
+    'chromium',
+    'Chromium',
+    'Google Chrome',
+  ];
+
+  for (const searchPath of searchPaths) {
+    if (!fs.existsSync(searchPath)) continue;
+
+    for (const execName of executableNames) {
+      const fullPath = path.join(searchPath, execName);
+      if (fs.existsSync(fullPath)) {
+        try {
+          const stat = fs.statSync(fullPath);
+          if (stat.isFile()) {
+            fs.accessSync(fullPath, fs.constants.X_OK);
+            executables.push(fullPath);
+          }
+        } catch (error) {
+          console.log(`[ChromiumHelper] Found ${fullPath} but it's not executable`);
+        }
+      }
+    }
+  }
+
+  return executables;
+}
+
+function findSystemChrome(): string {
+  const platform = process.platform;
+
+  if (platform === 'win32') {
+    const possiblePaths = [
+      'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+      'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+      path.join(process.env.LOCALAPPDATA || '', 'Google\\Chrome\\Application\\chrome.exe'),
+      path.join(process.env.PROGRAMFILES || '', 'Google\\Chrome\\Application\\chrome.exe'),
+      path.join(process.env['PROGRAMFILES(X86)'] || '', 'Google\\Chrome\\Application\\chrome.exe'),
+    ];
+
+    for (const chromePath of possiblePaths) {
+      if (fs.existsSync(chromePath)) {
+        console.log('[ChromiumHelper] Found system Chrome:', chromePath);
+        return chromePath;
+      }
+    }
+  } else if (platform === 'darwin') {
+    const possiblePaths = [
+      '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+      '/Applications/Chromium.app/Contents/MacOS/Chromium',
+      path.join(process.env.HOME || '', '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'),
+    ];
+
+    for (const chromePath of possiblePaths) {
+      if (fs.existsSync(chromePath)) {
+        console.log('[ChromiumHelper] Found system Chrome:', chromePath);
+        return chromePath;
+      }
+    }
+  } else {
+    const possiblePaths = [
+      '/usr/bin/google-chrome',
+      '/usr/bin/chromium',
+      '/usr/bin/chromium-browser',
+      '/snap/bin/chromium',
+      '/usr/local/bin/chrome',
+      '/usr/local/bin/chromium',
+    ];
+
+    for (const chromePath of possiblePaths) {
+      if (fs.existsSync(chromePath)) {
+        console.log('[ChromiumHelper] Found system Chrome:', chromePath);
+        return chromePath;
+      }
+    }
+  }
+
+  console.error('[ChromiumHelper] No Chrome/Chromium installation found!');
+  throw new Error(
+    'Chrome/Chromium not found. Please install Google Chrome or bundle Chromium with the application.'
+  );
+}

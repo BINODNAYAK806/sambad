@@ -1,0 +1,56 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": [
+      "ES2022"
+    ],
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "outDir": "dist-electron",
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "composite": true,
+    "tsBuildInfoFile": "./tsconfig.electron.tsbuildinfo"
+  },
+  "include": [
+    "electron/main/index.ts",
+    "electron/main/ipc.ts",
+    "electron/main/auth.ts",
+    "electron/main/permissions.ts",
+    "electron/main/subscriptions.ts",
+    "electron/main/supabase.ts",
+    "electron/main/configManager.ts",
+    "electron/main/whatsappAdapter.ts",
+    "electron/main/workerManager.ts",
+    "electron/main/consoleWindow.ts",
+    "electron/main/logManager.ts",
+    "electron/main/logger.ts",
+    "electron/main/rateLimiter.ts",
+    "electron/main/storageService.ts",
+    "electron/main/errorLogger.ts",
+    "electron/main/db/index.ts",
+    "electron/main/licenseService.ts",
+    "electron/main/userService.ts",
+    "electron/main/profileService.ts",
+    "electron/main/autoUpdater.ts",
+    "electron/main/supportService.ts",
+    "electron/main/whatsapp/**/*.ts",
+    "electron/main/sentinel/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "dist-electron",
+    "electron/worker/whatsappWorker.local.ts"
+  ]
+}

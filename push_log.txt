@@ -1,0 +1,23 @@
+﻿branch 'main' set up to track 'origin/main'.
+git : To https://githu
+b.com/BINODNAYAK806/sa
+mbad.git
+At line:1 char:1
++ git push -u origin 
+main --force 2>&1 | 
+Out-File push_log.txt 
+-Encodin ...
++ ~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~
+    + CategoryInfo    
+          : NotSpeci  
+  fied: (To https:/   
+ /gith...K806/samb    
+ad.git:String) []    
+, RemoteException
+    + FullyQualifiedE 
+   rrorId : NativeCo  
+  mmandError
+ 
+ * [new branch]      
+main -> main

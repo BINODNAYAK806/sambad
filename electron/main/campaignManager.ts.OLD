@@ -1,0 +1,197 @@
+import { Worker } from 'worker_threads';
+import { BrowserWindow } from 'electron';
+import * as path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+export interface CampaignTask {
+  campaignId: number;
+  campaignName: string;
+  messageTemplate: string;
+  contacts: Array<{
+    id: number;
+    phone: string;
+    name: string;
+    variables?: Record<string, string>;
+  }>;
+  delaySettings: {
+    preset: string;
+    minDelay?: number;
+    maxDelay?: number;
+  };
+}
+
+export class CampaignManager {
+  private worker: Worker | null = null;
+  private mainWindow: BrowserWindow | null = null;
+  private userDataPath: string;
+  private isInitialized: boolean = false;
+
+  constructor(userDataPath: string, mainWindow: BrowserWindow | null = null) {
+    this.userDataPath = userDataPath;
+    this.mainWindow = mainWindow;
+  }
+
+  async initialize(): Promise<void> {
+    if (this.isInitialized) {
+      console.log('[CampaignManager] Already initialized');
+      return;
+    }
+
+    try {
+      const workerPath = path.join(__dirname, '../worker/whatsappWorker.new.js');
+      console.log('[CampaignManager] Starting worker at:', workerPath);
+
+      this.worker = new Worker(workerPath);
+
+      this.setupWorkerListeners();
+
+      this.worker.postMessage({
+        type: 'INIT',
+        data: { userDataPath: this.userDataPath },
+      });
+
+      this.isInitialized = true;
+      console.log('[CampaignManager] Initialized successfully');
+    } catch (error) {
+      console.error('[CampaignManager] Initialization error:', error);
+      throw error;
+    }
+  }
+
+  private setupWorkerListeners(): void {
+    if (!this.worker) return;
+
+    this.worker.on('message', (message: any) => {
+      console.log('[CampaignManager] Worker message:', message.type);
+
+      if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+        switch (message.type) {
+          case 'QR_CODE':
+            this.mainWindow.webContents.send('campaign:qr', message.data.qr);
+            break;
+
+          case 'READY':
+            this.mainWindow.webContents.send('campaign:ready');
+            break;
+
+          case 'AUTHENTICATED':
+            this.mainWindow.webContents.send('campaign:authenticated');
+            break;
+
+          case 'CAMPAIGN_STARTED':
+            this.mainWindow.webContents.send('campaign:started', message.data);
+            break;
+
+          case 'CAMPAIGN_PROGRESS':
+            this.mainWindow.webContents.send('campaign:progress', message.data);
+            break;
+
+          case 'CAMPAIGN_COMPLETED':
+            this.mainWindow.webContents.send('campaign:complete', message.data);
+            break;
+
+          case 'CAMPAIGN_STOPPED':
+            this.mainWindow.webContents.send('campaign:stopped', message.data);
+            break;
+
+          case 'CAMPAIGN_PAUSED':
+            this.mainWindow.webContents.send('campaign:paused', message.data);
+            break;
+
+          case 'CAMPAIGN_RESUMED':
+            this.mainWindow.webContents.send('campaign:resumed', message.data);
+            break;
+
+          case 'ERROR':
+            this.mainWindow.webContents.send('campaign:error', message.data);
+            break;
+
+          case 'LOG':
+            break;
+
+          default:
+            console.log('[CampaignManager] Unhandled message type:', message.type);
+        }
+      }
+    });
+
+    this.worker.on('error', (error) => {
+      console.error('[CampaignManager] Worker error:', error);
+      if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+        this.mainWindow.webContents.send('campaign:error', {
+          errorType: 'WORKER_ERROR',
+          message: error.message,
+        });
+      }
+    });
+
+    this.worker.on('exit', (code) => {
+      console.log('[CampaignManager] Worker exited with code:', code);
+      this.worker = null;
+      this.isInitialized = false;
+    });
+  }
+
+  async startCampaign(campaign: CampaignTask): Promise<void> {
+    if (!this.worker || !this.isInitialized) {
+      throw new Error('Campaign manager not initialized');
+    }
+
+    this.worker.postMessage({
+      type: 'START_CAMPAIGN',
+      data: campaign,
+    });
+  }
+
+  pauseCampaign(): void {
+    if (!this.worker || !this.isInitialized) {
+      throw new Error('Campaign manager not initialized');
+    }
+
+    this.worker.postMessage({ type: 'PAUSE_CAMPAIGN' });
+  }
+
+  resumeCampaign(): void {
+    if (!this.worker || !this.isInitialized) {
+      throw new Error('Campaign manager not initialized');
+    }
+
+    this.worker.postMessage({ type: 'RESUME_CAMPAIGN' });
+  }
+
+  stopCampaign(): void {
+    if (!this.worker || !this.isInitialized) {
+      throw new Error('Campaign manager not initialized');
+    }
+
+    this.worker.postMessage({ type: 'STOP_CAMPAIGN' });
+  }
+
+  async logout(): Promise<void> {
+    if (!this.worker || !this.isInitialized) {
+      throw new Error('Campaign manager not initialized');
+    }
+
+    this.worker.postMessage({ type: 'LOGOUT' });
+  }
+
+  async getStatus(): Promise<void> {
+    if (!this.worker || !this.isInitialized) {
+      throw new Error('Campaign manager not initialized');
+    }
+
+    this.worker.postMessage({ type: 'GET_STATUS' });
+  }
+
+  async terminate(): Promise<void> {
+    if (this.worker) {
+      await this.worker.terminate();
+      this.worker = null;
+      this.isInitialized = false;
+      console.log('[CampaignManager] Terminated');
+    }
+  }
+}

@@ -1,0 +1,26 @@
+node_modules
+dist
+dist-electron
+dist-renderer
+*.log
+.DS_Store
+.env
+.vite
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS
+Thumbs.db
+
+# Build
+build/
+out/
+
+# Testing
+coverage/
+
+# Electron
+electron/dist/

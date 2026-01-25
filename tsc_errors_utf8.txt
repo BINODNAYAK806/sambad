@@ -1,0 +1,31 @@
+﻿src/renderer/components/CampaignMonitorDemo.tsx(97,7): error TS2322: Type 'string' is not assignable to type 'number'.
+src/renderer/components/CampaignRunnerDemo.tsx(11,5): error TS2322: Type 'string' is not assignable to type 'number'.
+src/renderer/components/UserManagement.tsx(1,8): error TS6133: 'React' is declared but its value is never read.
+src/renderer/hooks/useCampaignProgress.ts(89,16): error TS2345: Argument of type '(prev: CampaignStats) => { campaignId: string | number | null; status: "running"; progress: number; totalMessages: number; sentCount: number; failedCount: number; pendingCount: number; ... 4 more ...; qrCode: string | null; }' is not assignable to parameter of type 'SetStateAction<CampaignStats>'.
+  Type '(prev: CampaignStats) => { campaignId: string | number | null; status: "running"; progress: number; totalMessages: number; sentCount: number; failedCount: number; pendingCount: number; ... 4 more ...; qrCode: string | null; }' is not assignable to type '(prevState: CampaignStats) => CampaignStats'.
+    Call signature return types '{ campaignId: string | number | null; status: "running"; progress: number; totalMessages: number; sentCount: number; failedCount: number; pendingCount: number; currentMessage: { id: string | null; recipientNumber: string | null; status: "failed" | ... 1 more ... | null; }; startTime: number; estimatedTimeRemaining: ...' and 'CampaignStats' are incompatible.
+      The types of 'campaignId' are incompatible between these types.
+        Type 'string | number | null' is not assignable to type 'string | null'.
+          Type 'number' is not assignable to type 'string'.
+src/renderer/hooks/useCampaignProgress.ts(124,16): error TS2345: Argument of type '(prev: CampaignStats) => { campaignId: string | number | null; status: "completed"; progress: number; totalMessages: number; sentCount: number; failedCount: number; pendingCount: number; ... 4 more ...; startTime: number | null; }' is not assignable to parameter of type 'SetStateAction<CampaignStats>'.
+  Type '(prev: CampaignStats) => { campaignId: string | number | null; status: "completed"; progress: number; totalMessages: number; sentCount: number; failedCount: number; pendingCount: number; ... 4 more ...; startTime: number | null; }' is not assignable to type '(prevState: CampaignStats) => CampaignStats'.
+    Call signature return types '{ campaignId: string | number | null; status: "completed"; progress: number; totalMessages: number; sentCount: number; failedCount: number; pendingCount: number; estimatedTimeRemaining: number; currentMessage: { ...; }; error: string | null; qrCode: string | null; startTime: number | null; }' and 'CampaignStats' are incompatible.
+      The types of 'campaignId' are incompatible between these types.
+        Type 'string | number | null' is not assignable to type 'string | null'.
+          Type 'number' is not assignable to type 'string'.
+src/renderer/hooks/useCampaignProgress.ts(138,16): error TS2345: Argument of type '(prev: CampaignStats) => { campaignId: string | number | null; status: "error"; error: string; sentCount: number; failedCount: number; progress: number; totalMessages: number; ... 4 more ...; estimatedTimeRemaining: number | null; }' is not assignable to parameter of type 'SetStateAction<CampaignStats>'.
+  Type '(prev: CampaignStats) => { campaignId: string | number | null; status: "error"; error: string; sentCount: number; failedCount: number; progress: number; totalMessages: number; ... 4 more ...; estimatedTimeRemaining: number | null; }' is not assignable to type '(prevState: CampaignStats) => CampaignStats'.
+    Call signature return types '{ campaignId: string | number | null; status: "error"; error: string; sentCount: number; failedCount: number; progress: number; totalMessages: number; pendingCount: number; currentMessage: { ...; }; qrCode: string | null; startTime: number | null; estimatedTimeRemaining: number | null; }' and 'CampaignStats' are incompatible.
+      The types of 'campaignId' are incompatible between these types.
+        Type 'string | number | null' is not assignable to type 'string | null'.
+          Type 'number' is not assignable to type 'string'.
+src/renderer/pages/Campaigns.tsx(29,1): error TS6192: All imports in import declaration are unused.
+src/renderer/pages/Campaigns.tsx(384,23): error TS6133: 'total' is declared but its value is never read.
+src/renderer/pages/Campaigns.tsx(577,22): error TS2304: Cannot find name 'ImageIcon'.
+src/renderer/pages/Campaigns.tsx(582,24): error TS2304: Cannot find name 'ImageIcon'.
+src/renderer/pages/Reports.tsx(9,3): error TS6133: 'XCircle' is declared but its value is never read.
+src/renderer/pages/Reports.tsx(11,3): error TS6133: 'Clock' is declared but its value is never read.
+src/renderer/pages/Reports.tsx(50,7): error TS6133: 'downloadCSV' is declared but its value is never read.
+src/renderer/pages/Reports.tsx(84,7): error TS6133: 'downloadPDF' is declared but its value is never read.
+src/renderer/pages/Reports.tsx(88,7): error TS6133: 'downloadFailedReportExcel' is declared but its value is never read.
+src/renderer/pages/Reports.tsx(114,7): error TS6133: 'downloadFailedReportPDF' is declared but its value is never read.

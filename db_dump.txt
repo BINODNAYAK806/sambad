@@ -1,0 +1,387 @@
+
+=== TIMESTAMP: 2025-12-28T22:00:45.130Z ===
+
+=== CAMPAIGNS ===
+[
+  {
+    "id": 19,
+    "name": "HIJ",
+    "status": "completed",
+    "message_template": "HI {{name}} KLMLKMLKL, L,;LL;,L;;LL,; L;LLL K,L;L,;",
+    "group_id": null,
+    "delay_preset": "medium",
+    "delay_min": null,
+    "delay_max": null,
+    "created_at": "2025-12-27 22:29:32",
+    "template_image_path": null,
+    "template_image_name": "download.jpg",
+    "template_image_size": 6906,
+    "template_image_type": "image/jpeg",
+    "sent_count": 1,
+    "failed_count": 0,
+    "total_count": 0,
+    "started_at": null,
+    "completed_at": "2025-12-28T20:22:11.995Z"
+  },
+  {
+    "id": 18,
+    "name": "C",
+    "status": "completed",
+    "message_template": "{{name}}{{v1}}  L;,;';'",
+    "group_id": null,
+    "delay_preset": "medium",
+    "delay_min": null,
+    "delay_max": null,
+    "created_at": "2025-12-27 21:48:21",
+    "template_image_path": null,
+    "template_image_name": null,
+    "template_image_size": null,
+    "template_image_type": null,
+    "sent_count": 2,
+    "failed_count": 0,
+    "total_count": 0,
+    "started_at": null,
+    "completed_at": "2025-12-27T22:33:22.717Z"
+  },
+  {
+    "id": 16,
+    "name": "VQ",
+    "status": "completed",
+    "message_template": "{{name}}",
+    "group_id": null,
+    "delay_preset": "medium",
+    "delay_min": null,
+    "delay_max": null,
+    "created_at": "2025-12-27 21:25:40",
+    "template_image_path": null,
+    "template_image_name": null,
+    "template_image_size": null,
+    "template_image_type": null,
+    "sent_count": 0,
+    "failed_count": 1,
+    "total_count": 0,
+    "started_at": null,
+    "completed_at": "2025-12-27T22:19:30.234Z"
+  },
+  {
+    "id": 15,
+    "name": "VIDEO TESTING",
+    "status": "draft",
+    "message_template": "{{name}}",
+    "group_id": null,
+    "delay_preset": "medium",
+    "delay_min": null,
+    "delay_max": null,
+    "created_at": "2025-12-27 21:05:40",
+    "template_image_path": null,
+    "template_image_name": null,
+    "template_image_size": null,
+    "template_image_type": null,
+    "sent_count": 0,
+    "failed_count": 0,
+    "total_count": 0,
+    "started_at": null,
+    "completed_at": "2025-12-27T21:11:33.359Z"
+  },
+  {
+    "id": 14,
+    "name": "FIM",
+    "status": "completed",
+    "message_template": "{{name}}{{v1}}",
+    "group_id": null,
+    "delay_preset": "medium",
+    "delay_min": null,
+    "delay_max": null,
+    "created_at": "2025-12-27 20:49:08",
+    "template_image_path": null,
+    "template_image_name": null,
+    "template_image_size": null,
+    "template_image_type": null,
+    "sent_count": 1,
+    "failed_count": 0,
+    "total_count": 0,
+    "started_at": null,
+    "completed_at": "2025-12-27T20:49:16.495Z"
+  }
+]
+
+=== MESSAGES ===
+[
+  {
+    "id": "17669533254600.9gqtor5f1v7",
+    "campaign_id": 19,
+    "contact_id": null,
+    "recipient_number": "+919974216664",
+    "recipient_name": "Bob Johnson",
+    "template_text": "HI {{name}} KLMLKMLKL, L,;LL;,L;;LL,; L;LLL K,L;L,;",
+    "resolved_text": null,
+    "status": "sent",
+    "error_message": null,
+    "sent_at": "2025-12-28T20:22:09.066Z",
+    "created_at": "2025-12-28 20:22:05",
+    "updated_at": "2025-12-28T20:22:09.066Z"
+  },
+  {
+    "id": "17668783321310.msyz5ol2jfb",
+    "campaign_id": 15,
+    "contact_id": null,
+    "recipient_number": "+919974216664",
+    "recipient_name": "Bob Johnson",
+    "template_text": "{{name}}",
+    "resolved_text": null,
+    "status": "pending",
+    "error_message": null,
+    "sent_at": null,
+    "created_at": "2025-12-27 23:32:12",
+    "updated_at": "2025-12-27 23:32:12"
+  },
+  {
+    "id": "17668747935960.8f17jgxhcmr",
+    "campaign_id": 18,
+    "contact_id": null,
+    "recipient_number": "+918598846108",
+    "recipient_name": "John Doe",
+    "template_text": "{{name}}{{v1}}  L;,;';'",
+    "resolved_text": null,
+    "status": "sent",
+    "error_message": null,
+    "sent_at": "2025-12-27T22:33:16.387Z",
+    "created_at": "2025-12-27 22:33:13",
+    "updated_at": "2025-12-27T22:33:16.387Z"
+  },
+  {
+    "id": "17668747935960.n7tsgb48s8d",
+    "campaign_id": 18,
+    "contact_id": null,
+    "recipient_number": "9974216664",
+    "recipient_name": "ashok",
+    "template_text": "{{name}}{{v1}}  L;,;';'",
+    "resolved_text": null,
+    "status": "sent",
+    "error_message": null,
+    "sent_at": "2025-12-27T22:33:21.880Z",
+    "created_at": "2025-12-27 22:33:13",
+    "updated_at": "2025-12-27T22:33:21.880Z"
+  },
+  {
+    "id": "17668740349960.2izl3f3m0ip",
+    "campaign_id": 12,
+    "contact_id": null,
+    "recipient_number": "+918487056525",
+    "recipient_name": "Jane Smith",
+    "template_text": "mN {{v2}}{{v2}}{{v2}}{{v2}}{{v5}}",
+    "resolved_text": null,
+    "status": "sent",
+    "error_message": null,
+    "sent_at": "2025-12-27T22:21:14.649Z",
+    "created_at": "2025-12-27 22:20:35",
+    "updated_at": "2025-12-27T22:21:14.649Z"
+  },
+  {
+    "id": "17668740349960.rpjoe3w22ho",
+    "campaign_id": 12,
+    "contact_id": null,
+    "recipient_number": "7878787878",
+    "recipient_name": "sumit",
+    "template_text": "mN {{v2}}{{v2}}{{v2}}{{v2}}{{v5}}",
+    "resolved_text": null,
+    "status": "failed",
+    "error_message": "Phone number 7878787878 is not registered on WhatsApp",
+    "sent_at": null,
+    "created_at": "2025-12-27 22:20:35",
+    "updated_at": "2025-12-27T22:21:20.362Z"
+  },
+  {
+    "id": "17668739187380.x3u7qz26jyp",
+    "campaign_id": 16,
+    "contact_id": null,
+    "recipient_number": "+918598846108",
+    "recipient_name": "John Doe",
+    "template_text": "{{name}}",
+    "resolved_text": null,
+    "status": "failed",
+    "error_message": "Evaluation failed: t",
+    "sent_at": null,
+    "created_at": "2025-12-27 22:18:38",
+    "updated_at": "2025-12-27T22:19:28.252Z"
+  },
+  {
+    "id": "17668685521910.na5w8ml74o",
+    "campaign_id": 14,
+    "contact_id": null,
+    "recipient_number": "+918487056525",
+    "recipient_name": "Jane Smith",
+    "template_text": "{{name}}{{v1}}",
+    "resolved_text": null,
+    "status": "sent",
+    "error_message": null,
+    "sent_at": "2025-12-27T20:49:15.771Z",
+    "created_at": "2025-12-27 20:49:12",
+    "updated_at": "2025-12-27T20:49:15.771Z"
+  }
+]
+
+=== LOGS ===
+[
+  {
+    "id": 84,
+    "timestamp": 1766953325466,
+    "level": "info",
+    "category": "ipc",
+    "message": "Local status updated to running for 19",
+    "data": null
+  },
+  {
+    "id": 83,
+    "timestamp": 1766953325461,
+    "level": "info",
+    "category": "ipc",
+    "message": "Starting campaign 19",
+    "data": "Msg Count: 1"
+  },
+  {
+    "id": 82,
+    "timestamp": 1766904087473,
+    "level": "info",
+    "category": "ipc",
+    "message": "Local status updated to running for 19",
+    "data": null
+  },
+  {
+    "id": 81,
+    "timestamp": 1766904087471,
+    "level": "info",
+    "category": "ipc",
+    "message": "Starting campaign 19",
+    "data": "Msg Count: 1"
+  },
+  {
+    "id": 80,
+    "timestamp": 1766879696300,
+    "level": "info",
+    "category": "ipc",
+    "message": "Local status updated to running for 19",
+    "data": null
+  },
+  {
+    "id": 79,
+    "timestamp": 1766879696298,
+    "level": "info",
+    "category": "ipc",
+    "message": "Starting campaign 19",
+    "data": "Msg Count: 1"
+  },
+  {
+    "id": 78,
+    "timestamp": 1766878332137,
+    "level": "info",
+    "category": "ipc",
+    "message": "Local status updated to running for 15",
+    "data": null
+  },
+  {
+    "id": 77,
+    "timestamp": 1766878332133,
+    "level": "info",
+    "category": "ipc",
+    "message": "Starting campaign 15",
+    "data": "Msg Count: 1"
+  },
+  {
+    "id": 76,
+    "timestamp": 1766874793598,
+    "level": "info",
+    "category": "ipc",
+    "message": "Local status updated to running for 18",
+    "data": null
+  },
+  {
+    "id": 75,
+    "timestamp": 1766874793597,
+    "level": "info",
+    "category": "ipc",
+    "message": "Starting campaign 18",
+    "data": "Msg Count: 2"
+  },
+  {
+    "id": 73,
+    "timestamp": 1766874775983,
+    "level": "info",
+    "category": "ipc",
+    "message": "Starting campaign 18",
+    "data": "Msg Count: 2"
+  },
+  {
+    "id": 74,
+    "timestamp": 1766874775983,
+    "level": "info",
+    "category": "ipc",
+    "message": "Local status updated to running for 18",
+    "data": null
+  },
+  {
+    "id": 72,
+    "timestamp": 1766874034998,
+    "level": "info",
+    "category": "ipc",
+    "message": "Local status updated to running for 12",
+    "data": null
+  },
+  {
+    "id": 71,
+    "timestamp": 1766874034997,
+    "level": "info",
+    "category": "ipc",
+    "message": "Starting campaign 12",
+    "data": "Msg Count: 2"
+  },
+  {
+    "id": 70,
+    "timestamp": 1766873918743,
+    "level": "info",
+    "category": "ipc",
+    "message": "Local status updated to running for 16",
+    "data": null
+  },
+  {
+    "id": 69,
+    "timestamp": 1766873918742,
+    "level": "info",
+    "category": "ipc",
+    "message": "Starting campaign 16",
+    "data": "Msg Count: 1"
+  },
+  {
+    "id": 68,
+    "timestamp": 1766872789087,
+    "level": "info",
+    "category": "ipc",
+    "message": "Local status updated to running for 18",
+    "data": null
+  },
+  {
+    "id": 67,
+    "timestamp": 1766872789086,
+    "level": "info",
+    "category": "ipc",
+    "message": "Starting campaign 18",
+    "data": "Msg Count: 1"
+  },
+  {
+    "id": 66,
+    "timestamp": 1766872542053,
+    "level": "info",
+    "category": "ipc",
+    "message": "Local status updated to running for 18",
+    "data": null
+  },
+  {
+    "id": 65,
+    "timestamp": 1766872542052,
+    "level": "info",
+    "category": "ipc",
+    "message": "Starting campaign 18",
+    "data": "Msg Count: 1"
+  }
+]
+        

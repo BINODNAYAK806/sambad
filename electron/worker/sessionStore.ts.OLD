@@ -1,0 +1,166 @@
+import * as path from 'path';
+import * as fs from 'fs';
+
+export interface SessionStoreConfig {
+  userDataPath: string;
+  sessionName?: string;
+}
+
+export class SessionStore {
+  private sessionPath: string;
+  private sessionName: string;
+
+  constructor(config: SessionStoreConfig) {
+    this.sessionName = config.sessionName || 'sambad-wa-session';
+    this.sessionPath = path.join(config.userDataPath, 'wa-sessions', this.sessionName);
+    this.ensureSessionDirectory();
+  }
+
+  getSessionPath(): string {
+    return this.sessionPath;
+  }
+
+  sessionExists(): boolean {
+    try {
+      return fs.existsSync(this.sessionPath) && fs.readdirSync(this.sessionPath).length > 0;
+    } catch (error) {
+      console.error('[SessionStore] Error checking session:', error);
+      return false;
+    }
+  }
+
+  clearSession(): boolean {
+    try {
+      if (fs.existsSync(this.sessionPath)) {
+        fs.rmSync(this.sessionPath, { recursive: true, force: true });
+        console.log('[SessionStore] Session cleared successfully');
+        this.ensureSessionDirectory();
+        return true;
+      }
+      return false;
+    } catch (error) {
+      console.error('[SessionStore] Error clearing session:', error);
+      return false;
+    }
+  }
+
+  exportSession(destinationPath: string): boolean {
+    try {
+      if (!this.sessionExists()) {
+        throw new Error('No session to export');
+      }
+
+      this.copyDirectoryRecursive(this.sessionPath, destinationPath);
+      console.log('[SessionStore] Session exported to:', destinationPath);
+      return true;
+    } catch (error) {
+      console.error('[SessionStore] Error exporting session:', error);
+      return false;
+    }
+  }
+
+  importSession(sourcePath: string): boolean {
+    try {
+      if (!fs.existsSync(sourcePath)) {
+        throw new Error('Source session path does not exist');
+      }
+
+      this.clearSession();
+      this.copyDirectoryRecursive(sourcePath, this.sessionPath);
+      console.log('[SessionStore] Session imported from:', sourcePath);
+      return true;
+    } catch (error) {
+      console.error('[SessionStore] Error importing session:', error);
+      return false;
+    }
+  }
+
+  getSessionInfo() {
+    const exists = this.sessionExists();
+    let size = 0;
+    let fileCount = 0;
+    let lastModified: Date | null = null;
+
+    if (exists) {
+      try {
+        const stats = this.getDirectoryStats(this.sessionPath);
+        size = stats.size;
+        fileCount = stats.fileCount;
+        lastModified = stats.lastModified;
+      } catch (error) {
+        console.error('[SessionStore] Error getting session info:', error);
+      }
+    }
+
+    return {
+      exists,
+      path: this.sessionPath,
+      name: this.sessionName,
+      size,
+      fileCount,
+      lastModified,
+    };
+  }
+
+  private ensureSessionDirectory(): void {
+    const parentDir = path.dirname(this.sessionPath);
+    if (!fs.existsSync(parentDir)) {
+      fs.mkdirSync(parentDir, { recursive: true });
+    }
+    if (!fs.existsSync(this.sessionPath)) {
+      fs.mkdirSync(this.sessionPath, { recursive: true });
+    }
+  }
+
+  private copyDirectoryRecursive(source: string, destination: string): void {
+    if (!fs.existsSync(destination)) {
+      fs.mkdirSync(destination, { recursive: true });
+    }
+
+    const entries = fs.readdirSync(source, { withFileTypes: true });
+
+    for (const entry of entries) {
+      const srcPath = path.join(source, entry.name);
+      const destPath = path.join(destination, entry.name);
+
+      if (entry.isDirectory()) {
+        this.copyDirectoryRecursive(srcPath, destPath);
+      } else {
+        fs.copyFileSync(srcPath, destPath);
+      }
+    }
+  }
+
+  private getDirectoryStats(dirPath: string): {
+    size: number;
+    fileCount: number;
+    lastModified: Date;
+  } {
+    let size = 0;
+    let fileCount = 0;
+    let lastModified = new Date(0);
+
+    const traverse = (currentPath: string) => {
+      const entries = fs.readdirSync(currentPath, { withFileTypes: true });
+
+      for (const entry of entries) {
+        const fullPath = path.join(currentPath, entry.name);
+
+        if (entry.isDirectory()) {
+          traverse(fullPath);
+        } else {
+          fileCount++;
+          const stats = fs.statSync(fullPath);
+          size += stats.size;
+          if (stats.mtime > lastModified) {
+            lastModified = stats.mtime;
+          }
+        }
+      }
+    };
+
+    traverse(dirPath);
+
+    return { size, fileCount, lastModified };
+  }
+}

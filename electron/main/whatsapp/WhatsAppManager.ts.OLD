@@ -1,0 +1,249 @@
+import { app } from 'electron';
+
+import EventEmitter from 'events';
+import pkg from 'whatsapp-web.js';
+const { Client, LocalAuth } = pkg;
+// Import just the type for TypeScript
+import type { Client as ClientType } from 'whatsapp-web.js';
+
+import { getChromiumPath } from '../../worker/chromiumHelper.js';
+import { WhatsAppSession } from './whatsapp.session.js';
+
+export type WhatsAppState = 'idle' | 'launching' | 'qr' | 'ready' | 'error';
+
+export interface WhatsAppStatus {
+    state: WhatsAppState;
+    qr?: string;
+    error?: string;
+    me?: string;
+}
+
+class WhatsAppManager extends EventEmitter {
+    private static instance: WhatsAppManager;
+    private state: WhatsAppState = 'idle';
+    private qrCode: string | undefined;
+    private lastError: string | undefined;
+    private me: string | undefined;
+    private client: ClientType | null = null;
+
+    private constructor() {
+        super();
+        this.log('Instance created');
+    }
+
+    public static getInstance(): WhatsAppManager {
+        if (!WhatsAppManager.instance) {
+            WhatsAppManager.instance = new WhatsAppManager();
+        }
+        return WhatsAppManager.instance;
+    }
+
+    // --- State Management ---
+
+    public getStatus(): WhatsAppStatus {
+        return {
+            state: this.state,
+            qr: this.qrCode,
+            error: this.lastError,
+            me: this.me
+        };
+    }
+
+    private setState(newState: WhatsAppState) {
+        if (this.state !== newState) {
+            this.log(`State transition: ${this.state} -> ${newState}`);
+            this.state = newState;
+            this.emit('state-changed', this.getStatus());
+        }
+    }
+
+    // --- Public API ---
+
+    public async init() {
+        if (this.state === 'launching' || this.state === 'ready' || this.state === 'qr') {
+            this.log('Init ignored, already in active state');
+            return;
+        }
+
+        this.log('Initializing connection flow...');
+        this.setState('launching');
+        this.lastError = undefined;
+        this.qrCode = undefined;
+
+        try {
+            await this.launchClient();
+        } catch (error: any) {
+            this.handleError(error);
+        }
+    }
+
+    private async launchClient() {
+        if (this.client) {
+            this.log('Client already exists, destroying first...');
+            try { await this.client.destroy(); } catch (e) { console.error(e); }
+            this.client = null;
+        }
+
+        this.log('Resolving Chromium path...');
+        const executablePath = getChromiumPath();
+
+        this.log(`Using Chromium at: ${executablePath}`);
+        if (!executablePath) {
+            throw new Error('Could not resolve Chromium path');
+        }
+
+        // const sessionPath = WhatsAppSession.getSessionPath(); // Unused
+        // this.log(`Using session path: ${sessionPath}`);
+
+        const userDataPath = app.getPath('userData');
+        this.log(`Client Config - DataPath: ${userDataPath}, Executable: ${executablePath}`);
+
+        this.client = new Client({
+            authStrategy: new LocalAuth({
+                clientId: 'whatsapp-session', // Folder will be session-whatsapp-session
+                dataPath: userDataPath
+            }),
+            authTimeoutMs: 0, // Infinite wait for QR (bypasses 30s limit)
+            qrMaxRetries: 0, // 0 = unlimited retries
+            puppeteer: {
+                executablePath: executablePath,
+                headless: false, // Per Phase 5 requirement for Manual Login flow/Debugging
+                timeout: 0, // Disable launch timeout
+                args: [
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-accelerated-2d-canvas',
+                    '--no-first-run',
+                    '--no-zygote',
+                    '--disable-gpu',
+                    '--window-size=1200,800',
+                    '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                ]
+            }
+        });
+
+        this.client.on('qr', (qr: string) => {
+            this.log('QR Code received');
+            if (this.state !== 'ready') {
+                this.qrCode = qr;
+                this.setState('qr');
+            }
+        });
+
+        this.client.on('ready', () => {
+            this.log('Client is Ready!');
+            this.qrCode = undefined;
+            // @ts-ignore - wid property access might be untyped in safe mode
+            this.me = this.client?.info?.wid?.user; // Store my number
+            this.setState('ready');
+        });
+
+        this.client.on('authenticated', () => {
+            this.log('Authenticated');
+            this.qrCode = undefined;
+        });
+
+        this.client.on('auth_failure', (msg: string) => {
+            this.log(`Auth Failure: ${msg}`);
+            this.handleError(new Error(`Auth Failure: ${msg}`));
+        });
+
+        this.client.on('disconnected', (reason: string) => {
+            this.log(`Disconnected: ${reason}`);
+            this.state = 'idle';
+            this.qrCode = undefined;
+            this.client = null;
+        });
+
+        this.log('Client initialized, calling initialize()...');
+        try {
+            await this.client.initialize();
+            this.log('initialize() called successfully');
+        } catch (error: any) {
+            this.log(`CRITICAL INITIALIZATION ERROR: ${error.message}`);
+            this.handleError(error);
+            // Force destroy if init failed
+            if (this.client) {
+                try { await this.client.destroy(); } catch (e) { /* ignore */ }
+                this.client = null;
+            }
+        }
+    }
+
+    public async logout() {
+        this.log('Logging out...');
+        if (this.client) {
+            try {
+                await this.client.logout();
+            } catch (e) {
+                this.log('Logout error (ignored): ' + e);
+            }
+            try {
+                await this.client.destroy();
+            } catch (e) {
+                this.log('Destroy error (ignored): ' + e);
+            }
+            this.client = null;
+        }
+        this.state = 'idle';
+        this.qrCode = undefined;
+        this.me = undefined;
+        this.emit('state-changed', this.getStatus());
+    }
+
+    public async tryAutoConnect() {
+        this.log('Attempting auto-connect...');
+
+        // Phase 6 Check: "If invalid -> State remains idle"
+        // We use the helper which checks 'userData/session-whatsapp-session'
+
+        if (WhatsAppSession.hasSession()) {
+            this.log('Existing session found, launching...');
+            this.init();
+        } else {
+            this.log('No existing session found. Staying idle.');
+        }
+    }
+
+    public async send(recipient: string, message: any) {
+        if (this.state !== 'ready' || !this.client) {
+            throw new Error('WhatsApp is not ready');
+        }
+
+        // Handle recipient formatting (remove + and ensure @c.us)
+        let chatId = recipient.replace('+', '') + '@c.us';
+        if (chatId.includes('@c.us@c.us')) chatId = chatId.replace('@c.us@c.us', '@c.us');
+
+        this.log(`Sending message to ${chatId}`);
+
+        // Support text and media
+        if (message.type === 'image' || message.media) {
+            // Handle media sending
+            // const { MessageMedia } = await import('whatsapp-web.js');
+            // const media = MessageMedia.fromFilePath(message.media.path);
+            // await this.client.sendMessage(chatId, media, { caption: message.caption });
+            // Placeholder for Phase 7 details
+            await this.client.sendMessage(chatId, message.text || 'Media Message'); // Fallback for now to verify connectivity
+        } else {
+            await this.client.sendMessage(chatId, message.text);
+        }
+
+        this.log('Message sent successfully');
+    }
+
+    // --- Helpers ---
+
+    private handleError(error: Error) {
+        this.lastError = error.message;
+        this.log(`Error: ${error.message}`);
+        this.setState('error');
+    }
+
+    private log(message: string) {
+        console.log(`[WA] ${message}`);
+    }
+}
+
+export const whatsAppManager = WhatsAppManager.getInstance();
+

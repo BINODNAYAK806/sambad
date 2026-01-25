@@ -1,0 +1,13 @@
+
+> wapro@1.2.0 build:electron
+> tsc -p tsconfig.electron.json && tsc -p tsconfig.preload.json && node -e "const fs=require('fs');const p='dist-electron/electron/preload';if(fs.existsSync(p+'/index.js')){fs.renameSync(p+'/index.js',p+'/index.cjs');fs.existsSync(p+'/index.js.map')&&fs.renameSync(p+'/index.js.map',p+'/index.cjs.map')}" && node -e "const fs=require('fs');const path=require('path');const src='electron/worker/SafeWorker.wrapper.cjs';const dest='dist-electron/electron/worker/SafeWorker.wrapper.cjs';fs.mkdirSync(path.dirname(dest),{recursive:true});fs.copyFileSync(src,dest);console.log('Copied SafeWorker.wrapper.cjs to dist-electron');"
+
+electron/main/ipc.ts(107,5): error TS2304: Cannot find name 'runId'.
+electron/main/ipc.ts(108,51): error TS2304: Cannot find name 'runId'.
+electron/main/ipc.ts(236,11): error TS2304: Cannot find name 'runId'.
+electron/main/ipc.ts(238,38): error TS2304: Cannot find name 'runId'.
+electron/main/ipc.ts(256,11): error TS2304: Cannot find name 'runId'.
+electron/main/ipc.ts(258,38): error TS2304: Cannot find name 'runId'.
+electron/main/ipc.ts(346,9): error TS2304: Cannot find name 'runId'.
+electron/main/ipc.ts(347,30): error TS2304: Cannot find name 'runId'.
+electron/main/ipc.ts(348,45): error TS2304: Cannot find name 'runId'.
