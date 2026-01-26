@@ -2,7 +2,7 @@
   "name": "wapro",
   "productName": "Wapro",
   "private": true,
-  "version": "1.3.1",
+  "version": "1.3.2",
   "description": "Wapro - Smart Marketing . Safe Sending",
   "author": "BINODNAYAK806",
   "main": "dist-electron/electron/main/index.js",

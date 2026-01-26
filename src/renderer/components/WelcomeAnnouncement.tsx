@@ -42,7 +42,7 @@ export function WelcomeAnnouncement() {
       <DialogContent className="max-w-md p-0 overflow-hidden bg-transparent border-none shadow-2xl">
         <div className="relative group">
           <img 
-            src="/grand-launch.png" 
+            src="./grand-launch.png" 
             alt="Wapro Grand Launch" 
             className="w-full h-auto rounded-lg shadow-2xl border-2 border-white/10"
           />
