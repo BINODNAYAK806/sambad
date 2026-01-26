@@ -2,7 +2,7 @@
   "name": "wapro",
   "productName": "Wapro",
   "private": true,
-  "version": "1.3.2",
+  "version": "1.3.3",
   "description": "Wapro - Smart Marketing . Safe Sending",
   "author": "BINODNAYAK806",
   "main": "dist-electron/electron/main/index.js",
@@ -151,8 +151,9 @@
       "icon": "build/icon.ico"
     },
     "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
+      "oneClick": true,
+      "perMachine": true,
+      "allowToChangeInstallationDirectory": false,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true
     },
