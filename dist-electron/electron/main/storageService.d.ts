@@ -51,7 +51,7 @@ export declare class StorageService {
      * CAMPAIGNS - Cloud with local fallback
      */
     getCampaigns(): Promise<any[]>;
-    getCampaignWithMessages(id: number): Promise<any>;
+    getCampaignWithMessages(id: number | string): Promise<any>;
     createCampaign(campaign: any): Promise<any>;
     updateCampaign(id: number, updates: any): Promise<void>;
     updateCampaignProgress(id: number, sentCount: number, failedCount: number, status?: string): Promise<void>;

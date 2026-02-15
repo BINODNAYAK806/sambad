@@ -3,8 +3,12 @@
  *
  * Registers IPC handlers for renderer communication.
  */
-import { ipcMain } from 'electron';
+import { ipcMain, app } from 'electron';
+import * as fs from 'fs';
+import * as path from 'path';
 import { whatsAppClient } from './WhatsAppClient.js';
+import { getPollVotes, getPollSummary, getPollServerStats } from '../db/index.js';
+import * as XLSX from 'xlsx';
 export function registerWhatsAppHandlers(mainWindow) {
     console.log('[WhatsApp IPC] ========== REGISTERING HANDLERS ==========');
     // Set main window reference
@@ -13,44 +17,44 @@ export function registerWhatsAppHandlers(mainWindow) {
         console.log('[WhatsApp IPC] MainWindow reference set');
     }
     // Connect/Initialize
-    ipcMain.handle('whatsapp:connect', async () => {
+    ipcMain.handle('whatsapp:connect', async (_event, serverId = 1) => {
         try {
-            console.log('[WhatsApp IPC] Connect requested');
-            await whatsAppClient.initialize();
+            console.log(`[WhatsApp IPC] [Server ${serverId}] Connect requested`);
+            await whatsAppClient.initialize(serverId);
             return { success: true };
         }
         catch (error) {
-            console.error('[WhatsApp IPC] Connect failed:', error);
+            console.error(`[WhatsApp IPC] [Server ${serverId}] Connect failed:`, error);
             return { success: false, error: error.message };
         }
     });
     // Disconnect
-    ipcMain.handle('whatsapp:disconnect', async () => {
+    ipcMain.handle('whatsapp:disconnect', async (_event, serverId = 1) => {
         try {
-            console.log('[WhatsApp IPC] Disconnect requested');
-            await whatsAppClient.disconnect();
+            console.log(`[WhatsApp IPC] [Server ${serverId}] Disconnect requested`);
+            await whatsAppClient.disconnect(serverId);
             return { success: true };
         }
         catch (error) {
-            console.error('[WhatsApp IPC] Disconnect failed:', error);
+            console.error(`[WhatsApp IPC] [Server ${serverId}] Disconnect failed:`, error);
             return { success: false, error: error.message };
         }
     });
     // Logout
-    ipcMain.handle('whatsapp:logout', async () => {
+    ipcMain.handle('whatsapp:logout', async (_event, serverId = 1) => {
         try {
-            console.log('[WhatsApp IPC] Logout requested');
-            await whatsAppClient.logout();
+            console.log(`[WhatsApp IPC] [Server ${serverId}] Logout requested`);
+            await whatsAppClient.logout(serverId);
             return { success: true };
         }
         catch (error) {
-            console.error('[WhatsApp IPC] Logout failed:', error);
+            console.error(`[WhatsApp IPC] [Server ${serverId}] Logout failed:`, error);
             return { success: false, error: error.message };
         }
     });
     // Get Status
-    ipcMain.handle('whatsapp:status', async () => {
-        const status = whatsAppClient.getStatus();
+    ipcMain.handle('whatsapp:status', async (_event, serverId = 1) => {
+        const status = whatsAppClient.getStatus(serverId);
         return {
             success: true,
             isConnected: status.isReady,
@@ -63,83 +67,165 @@ export function registerWhatsAppHandlers(mainWindow) {
             error: status.error,
         };
     });
+    // Get All Statuses
+    ipcMain.handle('whatsapp:status-all', async () => {
+        const statuses = whatsAppClient.getAllStatuses();
+        return { success: true, statuses };
+    });
     // Send Message (for campaigns)
-    ipcMain.handle('whatsapp:send', async (_event, chatId, content, options) => {
+    ipcMain.handle('whatsapp:send', async (_event, serverId, chatId, content, options) => {
         try {
-            const result = await whatsAppClient.sendMessage(chatId, content, options);
+            const result = await whatsAppClient.sendMessage(serverId, chatId, content, options);
             return { success: true, messageId: result?.id };
         }
         catch (error) {
-            console.error('[WhatsApp IPC] Send failed:', error);
+            console.error(`[WhatsApp IPC] [Server ${serverId}] Send failed:`, error);
             return { success: false, error: error.message };
         }
     });
-    // Clear Session (delete .baileys_auth folder)
-    ipcMain.handle('whatsapp:clearSession', async () => {
+    // Send Poll
+    ipcMain.handle('whatsapp:send-poll', async (_event, serverId, chatId, question, options) => {
         try {
-            console.log('[WhatsApp IPC] Clear session requested');
+            const result = await whatsAppClient.sendPoll(serverId, chatId, question, options);
+            return { success: true, messageId: result?.id };
+        }
+        catch (error) {
+            console.error(`[WhatsApp IPC] [Server ${serverId}] Send poll failed:`, error);
+            return { success: false, error: error.message };
+        }
+    });
+    // Get Poll Votes
+    ipcMain.handle('whatsapp:get-poll-votes', async (_event, campaignId) => {
+        try {
+            return getPollVotes(campaignId);
+        }
+        catch (error) {
+            console.error('[WhatsApp IPC] Get poll votes failed:', error);
+            return { success: false, error: error.message };
+        }
+    });
+    // Get Poll Summary
+    ipcMain.handle('whatsapp:get-poll-summary', async (_event, campaignId) => {
+        try {
+            return getPollSummary(campaignId);
+        }
+        catch (error) {
+            console.error('[WhatsApp IPC] Get poll summary failed:', error);
+            return { success: false, error: error.message };
+        }
+    });
+    // Get Poll Server Stats
+    ipcMain.handle('whatsapp:get-poll-server-stats', async (_event, campaignId) => {
+        try {
+            return getPollServerStats(campaignId);
+        }
+        catch (error) {
+            console.error('[WhatsApp IPC] Get poll server stats failed:', error);
+            return { success: false, error: error.message };
+        }
+    });
+    // Export polls to Excel
+    ipcMain.handle('whatsapp:export-poll-excel', async (_event, campaignId) => {
+        try {
+            const votesResult = getPollVotes(campaignId);
+            const summaryResult = getPollSummary(campaignId);
+            if (!votesResult.success || !votesResult.data || !summaryResult.success || !summaryResult.data) {
+                return { success: false, error: 'Failed to get poll data' };
+            }
+            const workbook = XLSX.utils.book_new();
+            const votesSheet = XLSX.utils.json_to_sheet(votesResult.data.map((v) => ({
+                'Name': v.name,
+                'Phone': v.phone,
+                'Selected Option': v.selected_option || ''
+            })));
+            XLSX.utils.book_append_sheet(workbook, votesSheet, 'Votes');
+            const summary = summaryResult.data;
+            const summaryData = [
+                { 'Metric': 'Poll Question', 'Value': summary.poll_question },
+                { 'Metric': 'Total Sent', 'Value': summary.total_sent },
+                { 'Metric': 'Total Voted', 'Value': summary.total_votes },
+                { 'Metric': 'Response Rate', 'Value': `${((summary.total_votes / summary.total_sent) * 100).toFixed(1)}%` },
+                { 'Metric': '', 'Value': '' },
+                { 'Metric': 'Vote Breakdown', 'Value': '' },
+                ...summary.voteBreakdown.map((vb) => ({
+                    'Metric': vb.selected_option,
+                    'Value': `${vb.count} (${((vb.count / summary.total_votes) * 100).toFixed(1)}%)`
+                }))
+            ];
+            const summarySheet = XLSX.utils.json_to_sheet(summaryData);
+            XLSX.utils.book_append_sheet(workbook, summarySheet, 'Summary');
+            const fileName = `poll_results_campaign_${campaignId}_${Date.now()}.xlsx`;
+            const filePath = path.join(app.getPath('downloads'), fileName);
+            XLSX.writeFile(workbook, filePath);
+            return { success: true, data: { filePath } };
+        }
+        catch (error) {
+            console.error('[WhatsApp IPC] Export poll Excel failed:', error);
+            return { success: false, error: error.message };
+        }
+    });
+    // Clear Session (delete auth folder)
+    ipcMain.handle('whatsapp:clearSession', async (_event, serverId = 1) => {
+        try {
+            console.log(`[WhatsApp IPC] [Server ${serverId}] Clear session requested`);
             // First disconnect if connected
-            await whatsAppClient.disconnect();
-            // Delete the .baileys_auth folder
-            const { app } = await import('electron');
-            const path = await import('path');
-            const fs = await import('fs');
-            const userDataPath = app.getPath('userData');
-            const authPath = path.join(userDataPath, '.baileys_auth');
+            await whatsAppClient.disconnect(serverId);
+            // Delete the auth folder
+            const authPath = path.join(app.getPath('userData'), `.baileys_auth_server_${serverId}`);
             if (fs.existsSync(authPath)) {
                 fs.rmSync(authPath, { recursive: true, force: true });
-                console.log('[WhatsApp IPC] Deleted .baileys_auth folder');
+                console.log(`[WhatsApp IPC] [Server ${serverId}] Deleted auth folder`);
             }
             else {
-                console.log('[WhatsApp IPC] .baileys_auth folder does not exist');
+                console.log(`[WhatsApp IPC] [Server ${serverId}] Auth folder does not exist`);
             }
             return { success: true, message: 'Session cleared successfully' };
         }
         catch (error) {
-            console.error('[WhatsApp IPC] Clear session failed:', error);
+            console.error(`[WhatsApp IPC] [Server ${serverId}] Clear session failed:`, error);
             return { success: false, error: error.message };
         }
     });
     // Get All Contacts
-    ipcMain.handle('whatsapp:get-contacts', async () => {
+    ipcMain.handle('whatsapp:get-contacts', async (_event, serverId = 1) => {
         try {
-            console.log('[WhatsApp IPC] Get contacts requested');
-            const contacts = await whatsAppClient.getAllContacts();
+            console.log(`[WhatsApp IPC] [Server ${serverId}] Get contacts requested`);
+            const contacts = await whatsAppClient.getAllContacts(serverId);
             return { success: true, data: contacts };
         }
         catch (error) {
-            console.error('[WhatsApp IPC] Get contacts failed:', error);
+            console.error(`[WhatsApp IPC] [Server ${serverId}] Get contacts failed:`, error);
             return { success: false, error: error.message };
         }
     });
     // Get All Groups
-    ipcMain.handle('whatsapp:get-groups', async () => {
+    ipcMain.handle('whatsapp:get-groups', async (_event, serverId = 1) => {
         try {
-            console.log('[WhatsApp IPC] Get groups requested');
-            const groups = await whatsAppClient.getAllGroups();
+            console.log(`[WhatsApp IPC] [Server ${serverId}] Get groups requested`);
+            const groups = await whatsAppClient.getAllGroups(serverId);
             return { success: true, data: groups };
         }
         catch (error) {
-            console.error('[WhatsApp IPC] Get groups failed:', error);
+            console.error(`[WhatsApp IPC] [Server ${serverId}] Get groups failed:`, error);
             return { success: false, error: error.message };
         }
     });
     // Get Detailed Group Participants (with real phone numbers)
-    ipcMain.handle('whatsapp:get-group-participants', async (_event, groupJid) => {
+    ipcMain.handle('whatsapp:get-group-participants', async (_event, serverId, groupJid) => {
         try {
-            console.log('[WhatsApp IPC] Get group participants requested for:', groupJid);
-            const participants = await whatsAppClient.getGroupParticipantsDetailed(groupJid);
+            console.log(`[WhatsApp IPC] [Server ${serverId}] Get group participants requested for:`, groupJid);
+            const participants = await whatsAppClient.getGroupParticipantsDetailed(serverId, groupJid);
             return { success: true, data: participants };
         }
         catch (error) {
-            console.error('[WhatsApp IPC] Get group participants failed:', error);
+            console.error(`[WhatsApp IPC] [Server ${serverId}] Get group participants failed:`, error);
             return { success: false, error: error.message };
         }
     });
     // Import Contacts (Bulk Insert)
-    ipcMain.handle('whatsapp:import-contacts', async (_event, contacts) => {
+    ipcMain.handle('whatsapp:import-contacts', async (_event, serverId, contacts) => {
         try {
-            console.log(`[WhatsApp IPC] Import contacts requested: ${contacts.length} contacts`);
+            console.log(`[WhatsApp IPC] [Server ${serverId}] Import contacts requested: ${contacts.length} contacts`);
             const { storageService } = await import('../storageService.js');
             let successCount = 0;
             let failureCount = 0;
@@ -171,17 +257,17 @@ export function registerWhatsAppHandlers(mainWindow) {
             };
         }
         catch (error) {
-            console.error('[WhatsApp IPC] Import contacts failed:', error);
+            console.error(`[WhatsApp IPC] [Server ${serverId}] Import contacts failed:`, error);
             return { success: false, error: error.message };
         }
     });
     // Import Group (Create group + Add participants as contacts + Link)
-    ipcMain.handle('whatsapp:import-group', async (_event, group) => {
+    ipcMain.handle('whatsapp:import-group', async (_event, serverId, group) => {
         try {
-            console.log(`[WhatsApp IPC] Import group requested: ${group.subject}`);
+            console.log(`[WhatsApp IPC] [Server ${serverId}] Import group requested: ${group.subject}`);
             const { storageService } = await import('../storageService.js');
             // 1. Fetch detailed participants
-            const participants = await whatsAppClient.getGroupParticipantsDetailed(group.id);
+            const participants = await whatsAppClient.getGroupParticipantsDetailed(serverId, group.id);
             if (!participants || participants.length === 0) {
                 return { success: false, error: 'No participants found in group' };
             }
@@ -190,10 +276,10 @@ export function registerWhatsAppHandlers(mainWindow) {
             let appGroup = appGroups.find(g => g.name === group.subject);
             if (!appGroup) {
                 appGroup = await storageService.createGroup({ name: group.subject });
-                console.log(`[WhatsApp IPC] Created new group in App: ${group.subject} (ID: ${appGroup.id})`);
+                console.log(`[WhatsApp IPC] [Server ${serverId}] Created new group in App: ${group.subject} (ID: ${appGroup.id})`);
             }
             else {
-                console.log(`[WhatsApp IPC] Using existing group in App: ${group.subject} (ID: ${appGroup.id})`);
+                console.log(`[WhatsApp IPC] [Server ${serverId}] Using existing group in App: ${group.subject} (ID: ${appGroup.id})`);
             }
             // 3. Pre-fetch existing contacts for fast lookup
             const existingContacts = await storageService.getContacts();
@@ -221,10 +307,10 @@ export function registerWhatsAppHandlers(mainWindow) {
                             is_valid: true
                         });
                         contactId = contactResult.id;
-                        console.log(`[WhatsApp IPC] Created new contact: ${phone}`);
+                        console.log(`[WhatsApp IPC] [Server ${serverId}] Created new contact: ${phone}`);
                     }
                     catch (err) {
-                        console.error(`[WhatsApp IPC] Failed to create contact ${phone}:`, err);
+                        console.error(`[WhatsApp IPC] [Server ${serverId}] Failed to create contact ${phone}:`, err);
                         failureCount++;
                         continue;
                     }
@@ -250,7 +336,7 @@ export function registerWhatsAppHandlers(mainWindow) {
             };
         }
         catch (error) {
-            console.error('[WhatsApp IPC] Group import failed:', error);
+            console.error(`[WhatsApp IPC] [Server ${serverId}] Group import failed:`, error);
             return { success: false, error: error.message };
         }
     });

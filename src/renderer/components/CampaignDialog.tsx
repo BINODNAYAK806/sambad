@@ -21,9 +21,10 @@ import {
 } from '@/components/ui/select';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { AlertCircle, Info, Image as ImageIcon, X, Users, UserCheck } from 'lucide-react';
+import { AlertCircle, Image as ImageIcon, X, Users, UserCheck } from 'lucide-react';
 import { Separator } from '@/components/ui/separator';
 import { Card, CardContent } from '@/components/ui/card';
+import { Switch } from '@/components/ui/switch';
 import DelaySelector from './DelaySelector';
 import { MediaAttachmentSelector, type MediaAttachment } from './MediaAttachmentSelector';
 import { ContactSelector } from './ContactSelector';
@@ -57,7 +58,12 @@ export function CampaignDialog({ open, onOpenChange, onSuccess, campaign }: Camp
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-
+  // Multi-session & Poll states
+  const [sendingStrategy, setSendingStrategy] = useState<'single' | 'rotational'>('single');
+  const [selectedServerId, setSelectedServerId] = useState<number>(1);
+  const [isPoll, setIsPoll] = useState(false);
+  const [pollQuestion, setPollQuestion] = useState('');
+  const [pollOptions, setPollOptions] = useState<string[]>(['', '']);
 
   useEffect(() => {
     if (open) {
@@ -85,7 +91,25 @@ export function CampaignDialog({ open, onOpenChange, onSuccess, campaign }: Camp
           });
         }
 
+        // Multi-session fields
+        if (campaign.sending_strategy) {
+          setSendingStrategy(campaign.sending_strategy as any);
+        }
+        if (campaign.server_id) {
+          setSelectedServerId(campaign.server_id);
+        }
 
+        // Poll fields
+        if (campaign.is_poll) {
+          setIsPoll(true);
+          setPollQuestion(campaign.poll_question || '');
+          try {
+            const options = JSON.parse(campaign.poll_options || '["", ""]');
+            setPollOptions(options);
+          } catch (e) {
+            setPollOptions(['', '']);
+          }
+        }
 
         loadExistingMedia(campaign.id);
         loadExistingTemplateImage(campaign);
@@ -110,7 +134,6 @@ export function CampaignDialog({ open, onOpenChange, onSuccess, campaign }: Camp
     try {
       const result = await window.electronAPI.campaigns.getContacts(campaignId);
       if (result.success && result.data && result.data.length > 0) {
-        console.log('[CampaignDialog] Loading existing contacts:', result.data);
         setSelectedContactIds(result.data.map((c: any) => c.id));
       }
     } catch (err: any) {
@@ -122,8 +145,6 @@ export function CampaignDialog({ open, onOpenChange, onSuccess, campaign }: Camp
     try {
       const result = await window.electronAPI.campaigns.getMedia(campaignId);
       if (result.success && result.data && result.data.length > 0) {
-        console.log('[CampaignDialog] Loading existing media:', result.data);
-
         const existingAttachments: MediaAttachment[] = result.data.map((media: any) => ({
           id: media.id.toString(),
           type: media.file_type === 'document' || media.file_name.endsWith('.pdf') ? 'document' : 'image',
@@ -135,9 +156,7 @@ export function CampaignDialog({ open, onOpenChange, onSuccess, campaign }: Camp
           isExisting: true,
           preview: media.file_type && media.file_type.startsWith('image') ? media.file_path : undefined,
         }));
-
         setMediaAttachments(existingAttachments);
-        console.log('[CampaignDialog] Loaded', existingAttachments.length, 'existing media files');
       }
     } catch (err: any) {
       console.error('Failed to load existing media:', err);
@@ -146,7 +165,6 @@ export function CampaignDialog({ open, onOpenChange, onSuccess, campaign }: Camp
 
   const loadExistingTemplateImage = (campaign: Campaign) => {
     if (campaign.template_image_path && campaign.template_image_name) {
-      console.log('[CampaignDialog] Loading existing template image:', campaign.template_image_name);
       setTemplateImage({
         existingPath: campaign.template_image_path,
         existingName: campaign.template_image_name,
@@ -161,13 +179,15 @@ export function CampaignDialog({ open, onOpenChange, onSuccess, campaign }: Camp
     setTargetingMode('group');
     setSelectedGroupId('');
     setSelectedContactIds([]);
-    setDelayConfig({
-      preset: 'medium',
-    });
+    setDelayConfig({ preset: 'medium' });
     setMediaAttachments([]);
     setTemplateImage(null);
+    setSendingStrategy('single');
+    setSelectedServerId(1);
+    setIsPoll(false);
+    setPollQuestion('');
+    setPollOptions(['', '']);
     setError(null);
-
   };
 
   const handleSave = async () => {
@@ -176,8 +196,13 @@ export function CampaignDialog({ open, onOpenChange, onSuccess, campaign }: Camp
       return;
     }
 
-    if (!messageTemplate.trim()) {
+    if (!isPoll && !messageTemplate.trim()) {
       setError('Message template is required');
+      return;
+    }
+
+    if (isPoll && (!pollQuestion.trim() || pollOptions.filter(o => o.trim()).length < 2)) {
+      setError('Polls require a question and at least 2 non-empty options');
       return;
     }
 
@@ -194,6 +219,7 @@ export function CampaignDialog({ open, onOpenChange, onSuccess, campaign }: Camp
     try {
       setIsLoading(true);
       setError(null);
+      console.log('[CampaignDialog] SAVE DEBUG: sendingStrategy =', sendingStrategy, ', selectedServerId =', selectedServerId);
 
       const campaignData: any = {
         name: name.trim(),
@@ -203,7 +229,13 @@ export function CampaignDialog({ open, onOpenChange, onSuccess, campaign }: Camp
         delay_preset: delayConfig.preset,
         delay_min: delayConfig.customRange?.min,
         delay_max: delayConfig.customRange?.max,
-
+        // Multi-session
+        sending_strategy: sendingStrategy,
+        server_id: selectedServerId,
+        // Polls
+        is_poll: isPoll,
+        poll_question: isPoll ? pollQuestion.trim() : null,
+        poll_options: isPoll ? JSON.stringify(pollOptions.filter(o => o.trim())) : null,
       };
 
       if (templateImage?.file) {
@@ -211,20 +243,14 @@ export function CampaignDialog({ open, onOpenChange, onSuccess, campaign }: Camp
         const base64Data = btoa(
           new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
         );
-
         campaignData.template_image_data = base64Data;
         campaignData.template_image_name = templateImage.file.name;
         campaignData.template_image_size = templateImage.file.size;
         campaignData.template_image_type = templateImage.file.type;
       } else if (templateImage?.existingPath) {
-        // User is keeping the existing template image - preserve the path
         campaignData.template_image_path = templateImage.existingPath;
         campaignData.template_image_name = templateImage.existingName;
       } else if (!templateImage && campaign?.template_image_path) {
-        campaignData.template_image_data = null;
-        campaignData.template_image_name = null;
-        campaignData.template_image_size = null;
-        campaignData.template_image_type = null;
         campaignData.template_image_path = null;
       }
 
@@ -247,7 +273,6 @@ export function CampaignDialog({ open, onOpenChange, onSuccess, campaign }: Camp
               const deletedMediaIds = originalMediaIds.filter(id => !currentMediaIds.includes(id));
 
               for (const mediaId of deletedMediaIds) {
-                console.log('[CampaignDialog] Deleting removed media:', mediaId);
                 await window.electronAPI.campaigns.deleteMedia(mediaId);
               }
             }
@@ -256,48 +281,36 @@ export function CampaignDialog({ open, onOpenChange, onSuccess, campaign }: Camp
           for (const attachment of newMedia) {
             if (attachment.file) {
               const arrayBuffer = await attachment.file.arrayBuffer();
-              const base64Data = btoa(
-                new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
-              );
-
-              console.log(`[CampaignDialog] Saving media attachment: ${attachment.file.name}, size: ${attachment.file.size}`);
-              const addMediaResult = await window.electronAPI.campaigns.addMedia(campaignId, {
+              const base64Data = btoa(new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), ''));
+              await window.electronAPI.campaigns.addMedia(campaignId, {
                 fileName: attachment.file.name,
                 fileType: attachment.type,
                 fileSize: attachment.file.size,
                 fileData: base64Data,
                 caption: attachment.caption,
               });
-              console.log(`[CampaignDialog] Add media result:`, addMediaResult);
             }
           }
 
           if (targetingMode === 'contacts') {
             await window.electronAPI.campaigns.clearContacts(campaignId);
-
             if (selectedContactIds.length > 0) {
-              const addResult = await window.electronAPI.campaigns.addContacts(campaignId, selectedContactIds);
-              if (!addResult.success) {
-                console.error('[CampaignDialog] Failed to add contacts:', addResult.error);
-                throw new Error(addResult.error || 'Failed to add contacts to campaign');
-              }
-              console.log('[CampaignDialog] Added', selectedContactIds.length, 'contacts to campaign');
+              await window.electronAPI.campaigns.addContacts(campaignId, selectedContactIds);
             }
           } else if (campaign && !campaign.group_id) {
             await window.electronAPI.campaigns.clearContacts(campaignId);
           }
         }
 
-        toast.success(campaign ? 'Campaign updated successfully' : 'Campaign created successfully');
-        // Small delay to ensure DB consistency before refresh
+        toast.success(campaign ? 'Campaign updated' : 'Campaign created');
         await new Promise(resolve => setTimeout(resolve, 100));
         onSuccess();
         handleClose();
       } else {
-        setError(result.error || 'Failed to save campaign');
+        setError(result.error || 'Failed to save');
       }
     } catch (err: any) {
-      setError(err.message || 'Failed to save campaign');
+      setError(err.message || 'Failed to save');
     } finally {
       setIsLoading(false);
     }
@@ -311,25 +324,13 @@ export function CampaignDialog({ open, onOpenChange, onSuccess, campaign }: Camp
   const handleTemplateImageSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
     if (!files || files.length === 0) return;
-
     const file = files[0];
-
     if (!file.type.startsWith('image/')) {
-      setError('Please select a valid image file');
+      setError('Invalid image file');
       return;
     }
-
-    if (file.size > 16 * 1024 * 1024) {
-      setError('Image size must be less than 16MB');
-      return;
-    }
-
     const preview = URL.createObjectURL(file);
-    setTemplateImage({
-      file,
-      preview,
-    });
-
+    setTemplateImage({ file, preview });
     event.target.value = '';
   };
 
@@ -343,43 +344,86 @@ export function CampaignDialog({ open, onOpenChange, onSuccess, campaign }: Camp
   const insertVariable = (varName: string) => {
     const textarea = document.getElementById('message-template') as HTMLTextAreaElement;
     if (!textarea) return;
-
     const start = textarea.selectionStart;
     const end = textarea.selectionEnd;
     const text = messageTemplate;
-    const before = text.substring(0, start);
-    const after = text.substring(end);
-    const newText = before + `{{${varName}}}` + after;
-
+    const newText = text.substring(0, start) + `{{${varName}}}` + text.substring(end);
     setMessageTemplate(newText);
+    setTimeout(() => { textarea.focus(); }, 0);
+  };
 
-    setTimeout(() => {
-      textarea.focus();
-      const newPosition = start + varName.length + 4;
-      textarea.setSelectionRange(newPosition, newPosition);
-    }, 0);
+  const addPollOption = () => {
+    if (pollOptions.length < 10) {
+      setPollOptions([...pollOptions, '']);
+    }
+  };
+
+  const removePollOption = (index: number) => {
+    if (pollOptions.length > 2) {
+      const newOptions = [...pollOptions];
+      newOptions.splice(index, 1);
+      setPollOptions(newOptions);
+    }
+  };
+
+  const updatePollOption = (index: number, value: string) => {
+    const newOptions = [...pollOptions];
+    newOptions[index] = value;
+    setPollOptions(newOptions);
   };
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{campaign ? 'Edit Campaign' : 'Create New Campaign'}</DialogTitle>
           <DialogDescription>
-            Configure your campaign settings, message template, and delivery options.
+            Configure delivery strategy, message content, and interactive polls.
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="campaign-name">Campaign Name</Label>
-            <Input
-              id="campaign-name"
-              placeholder="Enter campaign name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
+        <div className="space-y-6">
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="campaign-name">Campaign Name</Label>
+              <Input
+                id="campaign-name"
+                placeholder="Marketing Blast #1"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Sending Strategy</Label>
+              <Select value={sendingStrategy} onValueChange={(v: any) => setSendingStrategy(v)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="single">Single Account</SelectItem>
+                  <SelectItem value="rotational">Rotational (Auto-shuffle)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
+
+          {sendingStrategy === 'single' && (
+            <div className="space-y-2">
+              <Label>Source Server Slot</Label>
+              <div className="grid grid-cols-5 gap-2">
+                {[1, 2, 3, 4, 5].map((id) => (
+                  <Button
+                    key={id}
+                    variant={selectedServerId === id ? 'default' : 'outline'}
+                    className="w-full"
+                    onClick={() => setSelectedServerId(id)}
+                  >
+                    Slot {id}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="space-y-3">
             <Label>Target Audience</Label>
@@ -391,185 +435,149 @@ export function CampaignDialog({ open, onOpenChange, onSuccess, campaign }: Camp
               <div className="flex items-center space-x-2">
                 <RadioGroupItem value="group" id="target-group" />
                 <Label htmlFor="target-group" className="font-normal cursor-pointer flex items-center gap-2">
-                  <Users className="h-4 w-4" />
-                  Target by Group
+                  <Users className="h-4 w-4" /> Group
                 </Label>
               </div>
               <div className="flex items-center space-x-2">
                 <RadioGroupItem value="contacts" id="target-contacts" />
                 <Label htmlFor="target-contacts" className="font-normal cursor-pointer flex items-center gap-2">
-                  <UserCheck className="h-4 w-4" />
-                  Target by Contacts
+                  <UserCheck className="h-4 w-4" /> Contacts
                 </Label>
               </div>
             </RadioGroup>
 
             {targetingMode === 'group' ? (
-              <div className="space-y-2">
-                <Label htmlFor="group-select">Select Group</Label>
-                <Select value={selectedGroupId} onValueChange={setSelectedGroupId}>
-                  <SelectTrigger id="group-select">
-                    <SelectValue placeholder="Select a group" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {groups.length === 0 ? (
-                      <div className="px-2 py-6 text-center text-sm text-muted-foreground">
-                        No groups available. Create a group first.
-                      </div>
-                    ) : (
-                      groups.map((group) => (
-                        <SelectItem key={group.id} value={group.id.toString()}>
-                          {group.name}
-                        </SelectItem>
-                      ))
-                    )}
-                  </SelectContent>
-                </Select>
-              </div>
+              <Select value={selectedGroupId} onValueChange={setSelectedGroupId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a group" />
+                </SelectTrigger>
+                <SelectContent>
+                  {groups.map((group) => (
+                    <SelectItem key={group.id} value={group.id.toString()}>{group.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             ) : (
-              <div className="space-y-2">
-                <Label>Select Contacts</Label>
-                <ContactSelector
-                  selectedContactIds={selectedContactIds}
-                  onChange={setSelectedContactIds}
-                />
-              </div>
+              <ContactSelector selectedContactIds={selectedContactIds} onChange={setSelectedContactIds} />
             )}
           </div>
 
-          <Separator className="my-4" />
+          <Separator />
 
-          <div className="space-y-2">
+          <div className="space-y-4">
             <div className="flex items-center justify-between">
-              <Label htmlFor="message-template">Message Template</Label>
-              <div className="flex gap-1 flex-wrap">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-6 px-2 text-xs font-bold border-primary text-primary"
-                  onClick={() => insertVariable('name')}
-                  onMouseDown={(e) => e.preventDefault()}
-                >
-                  name
-                </Button>
-                {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((i) => (
-                  <Button
-                    key={i}
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-6 px-2 text-xs"
-                    onClick={() => insertVariable(`v${i}`)}
-                    onMouseDown={(e) => e.preventDefault()}
-                  >
-                    v{i}
-                  </Button>
-                ))}
+              <Label className="text-lg font-bold">Content Type</Label>
+              <div className="flex items-center gap-2">
+                <Label htmlFor="is-poll" className="text-sm font-medium">Send as Poll?</Label>
+                <Switch id="is-poll" checked={isPoll} onCheckedChange={setIsPoll} />
               </div>
             </div>
-            <Textarea
-              id="message-template"
-              placeholder="Enter your message template. Use {{v1}}, {{v2}}, etc. for variables."
-              value={messageTemplate}
-              onChange={(e) => setMessageTemplate(e.target.value)}
-              rows={6}
-            />
-            <Alert>
-              <Info className="h-4 w-4" />
-              <AlertDescription className="text-xs">
-                Use variables like {"{{v1}}"}, {"{{v2}}"} in your message. They will be replaced with actual values from your contacts.
-              </AlertDescription>
-            </Alert>
-          </div>
 
-          <div className="space-y-2">
-            <Label className="text-sm font-medium">Template Image (Optional)</Label>
-            <p className="text-xs text-muted-foreground">
-              Add an image that will be sent with your message. The message text will be used as the caption.
-            </p>
-
-            {!templateImage ? (
-              <Label htmlFor="template-image-upload" className="cursor-pointer">
-                <Card className="border-2 border-dashed hover:border-primary transition-colors">
-                  <CardContent className="p-6">
-                    <div className="flex flex-col items-center justify-center">
-                      <ImageIcon className="h-10 w-10 text-muted-foreground mb-2" />
-                      <p className="text-sm text-muted-foreground text-center">
-                        Click to upload an image
-                      </p>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        JPG, PNG, GIF (Max 16MB)
-                      </p>
-                    </div>
-                  </CardContent>
-                </Card>
-              </Label>
-            ) : (
-              <Card>
-                <CardContent className="p-4">
-                  <div className="flex gap-3 items-start">
-                    <div className="flex-shrink-0">
-                      <img
-                        src={templateImage.preview}
-                        alt={templateImage.file?.name || templateImage.existingName || 'Template image'}
-                        className="w-20 h-20 object-cover rounded"
+            {isPoll ? (
+              <div className="space-y-4 p-4 border rounded-xl bg-accent/30">
+                <div className="space-y-2">
+                  <Label>Poll Question</Label>
+                  <Input
+                    placeholder="Wanna join our webinar?"
+                    value={pollQuestion}
+                    onChange={(e) => setPollQuestion(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Options (Min 2)</Label>
+                  {pollOptions.map((opt, idx) => (
+                    <div key={idx} className="flex gap-2">
+                      <Input
+                        placeholder={`Option ${idx + 1}`}
+                        value={opt}
+                        onChange={(e) => updatePollOption(idx, e.target.value)}
                       />
+                      {pollOptions.length > 2 && (
+                        <Button variant="ghost" size="icon" onClick={() => removePollOption(idx)}>
+                          <X className="h-4 w-4" />
+                        </Button>
+                      )}
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium truncate">
-                        {templateImage.file?.name || templateImage.existingName || 'Template image'}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        {templateImage.file ?
-                          `${(templateImage.file.size / 1024 / 1024).toFixed(2)} MB` :
-                          'Existing image'}
-                      </p>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        This image will be sent with your personalized message as caption
-                      </p>
+                  ))}
+                  <Button variant="outline" size="sm" className="w-full mt-2" onClick={addPollOption} disabled={pollOptions.length >= 10}>
+                    Add Option
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label>Message Template</Label>
+                    <div className="flex gap-1">
+                      <Button variant="outline" size="sm" className="h-6 text-xs" onClick={() => insertVariable('name')}>name</Button>
+                      {[1, 2, 3].map(i => (
+                        <Button key={i} variant="outline" size="sm" className="h-6 text-xs" onClick={() => insertVariable(`v${i}`)}>v{i}</Button>
+                      ))}
                     </div>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={removeTemplateImage}
-                      className="flex-shrink-0"
-                    >
-                      <X className="h-4 w-4" />
-                    </Button>
                   </div>
-                </CardContent>
-              </Card>
+                  <Textarea
+                    id="message-template"
+                    placeholder="Hi {{name}}, Check this out!"
+                    value={messageTemplate}
+                    onChange={(e) => setMessageTemplate(e.target.value)}
+                    rows={4}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-sm font-medium">Template Image (Optional)</Label>
+                  {!templateImage ? (
+                    <Label htmlFor="template-image-upload" className="cursor-pointer">
+                      <Card className="border-2 border-dashed hover:border-primary transition-colors">
+                        <CardContent className="p-4 flex flex-col items-center justify-center">
+                          <ImageIcon className="h-8 w-8 text-muted-foreground mb-2" />
+                          <p className="text-sm text-muted-foreground">Add display image</p>
+                        </CardContent>
+                      </Card>
+                    </Label>
+                  ) : (
+                    <Card className="p-2">
+                      <div className="flex gap-3 items-center">
+                        <img src={templateImage.preview} className="w-12 h-12 object-cover rounded" />
+                        <span className="flex-1 text-sm truncate">{templateImage.file?.name || 'Existing Image'}</span>
+                        <Button variant="ghost" size="icon" onClick={removeTemplateImage}><X className="h-4 w-4" /></Button>
+                      </div>
+                    </Card>
+                  )}
+                  <input id="template-image-upload" type="file" accept="image/*" className="hidden" onChange={handleTemplateImageSelect} />
+                </div>
+              </div>
             )}
-
-            <Input
-              id="template-image-upload"
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={handleTemplateImageSelect}
-            />
           </div>
 
+          <Separator />
 
-
-          <div className="space-y-2">
-            <Label>Delivery Delay</Label>
-            <DelaySelector
-              value={delayConfig}
-              onChange={setDelayConfig}
-            />
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <div className="space-y-2">
+              <Label>Delivery Delay</Label>
+              <DelaySelector value={delayConfig} onChange={setDelayConfig} />
+            </div>
+            <div className="space-y-2">
+              <Label>Sending Strategy</Label>
+              <RadioGroup value={sendingStrategy} onValueChange={(v) => setSendingStrategy(v as 'single' | 'rotational')} className="flex flex-col gap-2">
+                <div className="flex items-center gap-2">
+                  <RadioGroupItem value="single" id="strat-single" />
+                  <Label htmlFor="strat-single" className="font-normal cursor-pointer">Single Account (Server 1)</Label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <RadioGroupItem value="rotational" id="strat-rotational" />
+                  <Label htmlFor="strat-rotational" className="font-normal cursor-pointer">Rotational (All Accounts)</Label>
+                </div>
+              </RadioGroup>
+            </div>
+            {!isPoll && (
+              <MediaAttachmentSelector
+                attachments={mediaAttachments}
+                onChange={setMediaAttachments}
+              />
+            )}
           </div>
-
-          <Separator className="my-6" />
-
-          <MediaAttachmentSelector
-            attachments={mediaAttachments}
-            onChange={setMediaAttachments}
-            maxImages={10}
-            maxDocuments={10}
-          />
 
           {error && (
             <Alert variant="destructive">
@@ -579,10 +587,8 @@ export function CampaignDialog({ open, onOpenChange, onSuccess, campaign }: Camp
           )}
         </div>
 
-        <DialogFooter>
-          <Button variant="outline" onClick={handleClose} disabled={isLoading}>
-            Cancel
-          </Button>
+        <DialogFooter className="sticky bottom-0 bg-background pt-4 border-t">
+          <Button variant="outline" onClick={handleClose} disabled={isLoading}>Cancel</Button>
           <Button onClick={handleSave} disabled={isLoading}>
             {isLoading ? 'Saving...' : campaign ? 'Update Campaign' : 'Create Campaign'}
           </Button>

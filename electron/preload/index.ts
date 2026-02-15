@@ -296,62 +296,83 @@ const api = {
   },
 
   whatsapp: {
-    connect: (): Promise<DbResult> =>
-      ipcRenderer.invoke('whatsapp:connect'),
-    disconnect: (): Promise<DbResult> =>
-      ipcRenderer.invoke('whatsapp:disconnect'),
-    logout: (): Promise<DbResult> =>
-      ipcRenderer.invoke('whatsapp:logout'),
-    clearSession: (): Promise<DbResult> =>
-      ipcRenderer.invoke('whatsapp:clearSession'),
-    getContacts: (): Promise<DbResult<any[]>> =>
-      ipcRenderer.invoke('whatsapp:get-contacts'),
-    getGroups: (): Promise<DbResult<any[]>> =>
-      ipcRenderer.invoke('whatsapp:get-groups'),
-    getGroupParticipants: (groupJid: string): Promise<DbResult<any[]>> =>
-      ipcRenderer.invoke('whatsapp:get-group-participants', groupJid),
+    connect: (serverId?: number): Promise<DbResult> =>
+      ipcRenderer.invoke('whatsapp:connect', serverId),
+    disconnect: (serverId?: number): Promise<DbResult> =>
+      ipcRenderer.invoke('whatsapp:disconnect', serverId),
+    logout: (serverId?: number): Promise<DbResult> =>
+      ipcRenderer.invoke('whatsapp:logout', serverId),
+    clearSession: (serverId?: number): Promise<DbResult> =>
+      ipcRenderer.invoke('whatsapp:clearSession', serverId),
+    sendPoll: (serverId: number, chatId: string, question: string, options: string[]): Promise<DbResult> =>
+      ipcRenderer.invoke('whatsapp:send-poll', serverId, chatId, question, options),
+    getContacts: (serverId?: number): Promise<DbResult<any[]>> =>
+      ipcRenderer.invoke('whatsapp:get-contacts', serverId),
+    getGroups: (serverId?: number): Promise<DbResult<any[]>> =>
+      ipcRenderer.invoke('whatsapp:get-groups', serverId),
+    getGroupParticipants: (serverId: number, groupJid: string): Promise<DbResult<any[]>> =>
+      ipcRenderer.invoke('whatsapp:get-group-participants', serverId, groupJid),
     importContacts: (contacts: any[]): Promise<DbResult> =>
       ipcRenderer.invoke('whatsapp:import-contacts', contacts),
-    importGroup: (group: any): Promise<DbResult> =>
-      ipcRenderer.invoke('whatsapp:import-group', group),
-    getStatus: (): Promise<DbResult<{ isConnected: boolean; isInitializing: boolean; phoneNumber?: string }>> =>
-      ipcRenderer.invoke('whatsapp:status'),
+    importGroup: (serverId: number, group: any): Promise<DbResult> =>
+      ipcRenderer.invoke('whatsapp:import-group', serverId, group),
+    getStatus: (serverId?: number): Promise<DbResult<{ isConnected: boolean; isInitializing: boolean; phoneNumber?: string }>> =>
+      ipcRenderer.invoke('whatsapp:status', serverId),
+    getStatusAll: (): Promise<DbResult<{ [key: number]: any }>> =>
+      ipcRenderer.invoke('whatsapp:status-all'),
+    getPollVotes: (campaignId: number) =>
+      ipcRenderer.invoke('whatsapp:get-poll-votes', campaignId),
+    getPollSummary: (campaignId: number) =>
+      ipcRenderer.invoke('whatsapp:get-poll-summary', campaignId),
+    getPollServerStats: (campaignId: number) =>
+      ipcRenderer.invoke('whatsapp:get-poll-server-stats', campaignId),
+    exportPollExcel: (campaignId: number) =>
+      ipcRenderer.invoke('whatsapp:export-poll-excel', campaignId),
 
-    onQrCode: (callback: (qrCode: string) => void) => {
-      const listener = (_event: any, data: { qrCode?: string }) => {
-        if (data.qrCode) callback(data.qrCode);
-      };
+    onQrCode: (callback: (data: { serverId: number; qrCode: string }) => void) => {
+      const listener = (_event: any, data: any) => callback(data);
       ipcRenderer.on('whatsapp:qr_code', listener);
       return () => ipcRenderer.removeListener('whatsapp:qr_code', listener);
     },
 
-    onReady: (callback: (data: { phoneNumber?: string }) => void) => {
-      const listener = (_event: any, data: any) => callback(data || {});
+    onReady: (callback: (data: { serverId: number; phoneNumber?: string }) => void) => {
+      const listener = (_event: any, data: any) => callback(data);
       ipcRenderer.on('whatsapp:ready', listener);
       return () => ipcRenderer.removeListener('whatsapp:ready', listener);
     },
 
-    onAuthenticated: (callback: () => void) => {
-      const listener = () => callback();
+    onStatus: (callback: (data: { serverId: number; status: any }) => void) => {
+      const listener = (_event: any, data: any) => callback(data);
+      ipcRenderer.on('whatsapp:status', listener);
+      return () => ipcRenderer.removeListener('whatsapp:status', listener);
+    },
+
+    onAuthenticated: (callback: (data: { serverId: number }) => void) => {
+      const listener = (_event: any, data: any) => callback(data);
       ipcRenderer.on('whatsapp:authenticated', listener);
       return () => ipcRenderer.removeListener('whatsapp:authenticated', listener);
     },
 
-    onDisconnected: (callback: () => void) => {
-      const listener = () => callback();
+    onDisconnected: (callback: (data: { serverId: number }) => void) => {
+      const listener = (_event: any, data: any) => callback(data);
       ipcRenderer.on('whatsapp:disconnected', listener);
       return () => ipcRenderer.removeListener('whatsapp:disconnected', listener);
     },
 
-    onLog: (callback: (message: string) => void) => {
-      const listener = (_event: any, message: string) => callback(message);
+    onReconnecting: (callback: (data: { serverId: number }) => void) => {
+      const listener = (_event: any, data: any) => callback(data);
+      ipcRenderer.on('whatsapp:reconnecting', listener);
+      return () => ipcRenderer.removeListener('whatsapp:reconnecting', listener);
+    },
+
+    onLog: (callback: (data: { serverId: number; message: string }) => void) => {
+      const listener = (_event: any, data: any) => callback(data);
       ipcRenderer.on('whatsapp:log', listener);
       return () => ipcRenderer.removeListener('whatsapp:log', listener);
     },
-    onError: (callback: (error: string) => void) => {
-      const listener = (_event: any, data: { error?: string }) => {
-        if (data.error) callback(data.error);
-      };
+
+    onError: (callback: (data: { serverId: number; error: string }) => void) => {
+      const listener = (_event: any, data: any) => callback(data);
       ipcRenderer.on('whatsapp:error', listener);
       return () => ipcRenderer.removeListener('whatsapp:error', listener);
     },

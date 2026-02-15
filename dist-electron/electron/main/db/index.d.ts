@@ -41,6 +41,11 @@ export type Campaign = {
     template_image_name?: string;
     template_image_size?: number;
     template_image_type?: string;
+    sending_strategy?: 'single' | 'rotational';
+    server_id?: number;
+    is_poll?: boolean;
+    poll_question?: string;
+    poll_options?: string;
 };
 export type GroupContact = {
     group_id: number;
@@ -181,4 +186,29 @@ export declare const reports: {
     getFailedMessages: (campaignId: number) => any[];
 };
 export declare function closeDatabase(): void;
+export declare function createPollResult(campaignId: number, messageId: string, question: string, options: string[]): {
+    success: boolean;
+    error?: string;
+};
+export declare function storePollVote(messageId: string, voterJid: string, voterName: string, voterPhone: string, selectedOption: string): {
+    success: boolean;
+    error?: string;
+};
+export declare function getPollVotes(campaignId: number): {
+    success: boolean;
+    data?: any[];
+    error?: string;
+};
+export declare function getPollSummary(campaignId: number): {
+    success: boolean;
+    data?: any;
+    error?: string;
+};
+export declare function getPollServerStats(campaignId: number): {
+    success: boolean;
+    data?: any[];
+    error?: string;
+};
+export declare function createCampaignMessage(campaignId: number, messageId: string, recipientNumber: string, recipientName: string | undefined, templateText: string, status: 'pending' | 'sent' | 'failed', serverId: number, errorMessage?: string): void;
+export declare function updateCampaignMessageStatus(messageId: string, status: 'sent' | 'failed', errorMessage?: string): void;
 //# sourceMappingURL=index.d.ts.map

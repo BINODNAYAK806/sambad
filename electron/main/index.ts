@@ -78,7 +78,9 @@ app.commandLine.appendSwitch('disable-features', 'OutOfBlinkCors');
 
 let mainWindow: BrowserWindow | null = null;
 
+
 function createWindow() {
+
   console.log('[Sambad] Creating main window');
 
   // Preload path resolution
@@ -181,6 +183,7 @@ function createWindow() {
     //       └── electron/
     //           ├── main/
     //           └── preload/
+    //
 
     const appPath = app.getAppPath();
     const htmlPath = path.join(appPath, 'dist', 'index.html');
@@ -240,6 +243,7 @@ app.whenReady().then(() => {
 
     const win = createWindow();
     if (win) {
+      (global as any).mainWindow = win; // Attach for global access
       updateIpcMainWindow(win);
       setCampaignMainWindow(win); // For sending campaign progress events
 

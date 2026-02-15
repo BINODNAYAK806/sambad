@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -25,7 +25,8 @@ import {
   Download,
   RefreshCw,
   Sparkles,
-  X
+  X,
+  BarChart3
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -54,10 +55,11 @@ import {
 } from '@/components/ui/dialog';
 import { CampaignDialog } from '../components/CampaignDialog';
 import { CampaignRunner } from '../components/CampaignRunner';
+import { PollResultsDialog } from '../components/PollResultsDialog';
 import type { Campaign } from '../types/electron';
 import { toast } from 'sonner';
 
-export function Campaigns() {
+export const Campaigns = React.memo(() => {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -69,6 +71,8 @@ export function Campaigns() {
   const [runningCampaign, setRunningCampaign] = useState<Campaign | undefined>(undefined);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewCampaign, setPreviewCampaign] = useState<Campaign | undefined>(undefined);
+  const [pollResultsOpen, setPollResultsOpen] = useState(false);
+  const [pollResultsCampaign, setPollResultsCampaign] = useState<Campaign | undefined>(undefined);
   const { user } = useAuth();
   const isStaff = user?.role === 'STAFF';
 
@@ -96,16 +100,46 @@ export function Campaigns() {
       loadCampaigns();
     };
 
+    const handleCampaignStopped = () => {
+      loadCampaigns();
+    };
+
     const handleCampaignProgress = (_event: any, data: any) => {
       setCampaigns(prev => prev.map(c => {
         if (String(c.id) === String(data.campaignId)) {
           return {
             ...c,
-            status: 'running',
+            status: c.status === 'paused' ? 'paused' : 'running',
             sent_count: data.sentCount || data.processedContacts || 0,
             failed_count: data.failedCount || 0,
             total_count: data.totalMessages || data.totalContacts || c.total_count
           };
+        }
+        return c;
+      }));
+    };
+
+    const handleCampaignPaused = (_event: any, data: any) => {
+      setCampaigns(prev => prev.map(c => {
+        // If data includes campaignId, use it; otherwise, we might need a better way to track "active" campaign on this page
+        if (data && data.campaignId && String(c.id) === String(data.campaignId)) {
+          return { ...c, status: 'paused' };
+        }
+        // Fallback: If status is running, set to paused (assuming one campaign at a time)
+        if (c.status === 'running') {
+          return { ...c, status: 'paused' };
+        }
+        return c;
+      }));
+    };
+
+    const handleCampaignResumed = (_event: any, data: any) => {
+      setCampaigns(prev => prev.map(c => {
+        if (data && data.campaignId && String(c.id) === String(data.campaignId)) {
+          return { ...c, status: 'running' };
+        }
+        if (c.status === 'paused') {
+          return { ...c, status: 'running' };
         }
         return c;
       }));
@@ -117,12 +151,18 @@ export function Campaigns() {
 
       window.electronAPI.on('campaign:complete', onCompleteWrapper);
       window.electronAPI.on('campaign:error', handleCampaignError);
+      window.electronAPI.on('campaign:stopped', handleCampaignStopped);
+      window.electronAPI.on('campaign:paused', handleCampaignPaused);
+      window.electronAPI.on('campaign:resumed', handleCampaignResumed);
       window.electronAPI.on('campaign:progress', onProgressWrapper);
 
       return () => {
         if (window.electronAPI && window.electronAPI.removeListener) {
           window.electronAPI.removeListener('campaign:complete', onCompleteWrapper);
           window.electronAPI.removeListener('campaign:error', handleCampaignError);
+          window.electronAPI.removeListener('campaign:stopped', handleCampaignStopped);
+          window.electronAPI.removeListener('campaign:paused', handleCampaignPaused);
+          window.electronAPI.removeListener('campaign:resumed', handleCampaignResumed);
           window.electronAPI.removeListener('campaign:progress', onProgressWrapper);
         }
       };
@@ -406,6 +446,19 @@ export function Campaigns() {
                         <Button variant="ghost" size="sm" onClick={() => handlePreview(campaign)} title="Preview Message">
                           <Eye className="h-4 w-4" />
                         </Button>
+                        {campaign.is_poll && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              setPollResultsCampaign(campaign);
+                              setPollResultsOpen(true);
+                            }}
+                            title="View Poll Results"
+                          >
+                            <BarChart3 className="h-4 w-4" />
+                          </Button>
+                        )}
                         <Button variant={campaign.status === 'running' ? 'secondary' : 'default'} size="sm" onClick={() => handleRun(campaign)} title="Run Campaign">
                           {campaign.status === 'running' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
                         </Button>
@@ -488,6 +541,13 @@ export function Campaigns() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Poll Results Dialog */}
+      <PollResultsDialog
+        campaign={pollResultsCampaign}
+        open={pollResultsOpen}
+        onOpenChange={setPollResultsOpen}
+      />
     </div>
   );
-}
+});

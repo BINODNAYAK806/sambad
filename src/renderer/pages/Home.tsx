@@ -3,8 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Megaphone, Users, TrendingUp, MessageSquare, Terminal, ArrowUpRight, Sparkles, AlertCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { WhatsAppConnection } from '../components/WhatsAppConnection';
-
+import { WhatsAppStatusOverview } from '../components/WhatsAppStatusOverview';
 
 export function Home() {
   const navigate = useNavigate();
@@ -214,7 +213,7 @@ export function Home() {
         })}
       </div>
 
-      <WhatsAppConnection />
+      <WhatsAppStatusOverview />
 
       <div className="grid gap-6 md:grid-cols-2">
         <Card className="border-0 shadow-md overflow-hidden">

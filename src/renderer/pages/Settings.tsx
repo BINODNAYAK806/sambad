@@ -7,9 +7,10 @@ import { useAuth } from '@/renderer/contexts/AuthContext';
 import { UserManagement } from '@/renderer/components/UserManagement';
 import { BusinessProfile } from '@/renderer/components/BusinessProfile';
 import { ChromiumSettings } from '@/renderer/components/ChromiumSettings';
+import { MultiServerSettings } from '@/renderer/components/MultiServerSettings';
 import { useEffect, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
-import { Download, Upload, Database, Loader2 } from 'lucide-react';
+import { Download, Upload, Database, Loader2, MessageCircle } from 'lucide-react';
 
 export function Settings() {
   const { user } = useAuth();
@@ -50,8 +51,12 @@ export function Settings() {
         )}
       </div>
 
-      <Tabs defaultValue={isAdmin ? "business-profile" : "notifications"} className="space-y-4">
-        <TabsList>
+      <Tabs defaultValue={isAdmin ? "whatsapp-servers" : "notifications"} className="space-y-4">
+        <TabsList className="bg-muted/50 border h-auto p-1 overflow-x-auto justify-start">
+          <TabsTrigger value="whatsapp-servers" className="flex items-center gap-2">
+            <MessageCircle className="h-4 w-4" />
+            WhatsApp Servers
+          </TabsTrigger>
           {isAdmin && <TabsTrigger value="business-profile">Business Profile</TabsTrigger>}
           <TabsTrigger value="notifications">Notifications</TabsTrigger>
           <TabsTrigger value="security">Security</TabsTrigger>
@@ -60,6 +65,10 @@ export function Settings() {
           <TabsTrigger value="data">Data</TabsTrigger>
           <TabsTrigger value="about">About</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="whatsapp-servers" className="space-y-4">
+          <MultiServerSettings />
+        </TabsContent>
 
 
 

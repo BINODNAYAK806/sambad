@@ -12,39 +12,41 @@ export interface WhatsAppStatus {
     error?: string;
     phoneNumber?: string;
 }
-declare class WhatsAppClientSingleton {
+export declare class WhatsAppClientSingleton {
     private static instance;
-    private sock;
+    private socks;
     private mainWindow;
-    private state;
-    private lastError;
+    private states;
+    private lastErrors;
     private userDataPath;
-    private phoneNumber;
-    private authState;
-    private saveCreds;
-    private contacts;
-    private storeFile;
-    private isDirty;
+    private phoneNumbers;
+    private authStates;
+    private saveCredsMap;
+    private contactsMap;
+    private isDirtyMap;
     private constructor();
+    private getStoreFile;
     private loadStore;
     private saveStore;
     static getInstance(): WhatsAppClientSingleton;
     setMainWindow(window: BrowserWindow): void;
-    getStatus(): WhatsAppStatus;
+    getStatus(serverId?: number): WhatsAppStatus;
+    getAllStatuses(): Record<number, WhatsAppStatus>;
+    private lastLogTime;
     private log;
-    initialize(): Promise<void>;
+    initialize(serverId?: number): Promise<void>;
     private setupEventListeners;
-    disconnect(): Promise<void>;
-    logout(): Promise<void>;
-    sendMessage(chatId: string, content: string | any, options?: any): Promise<any>;
-    getNumberId(number: string): Promise<any>;
+    disconnect(serverId?: number): Promise<void>;
+    logout(serverId?: number): Promise<void>;
+    sendMessage(serverId: number, chatId: string, content: string | any, options?: any): Promise<any>;
+    sendPoll(serverId: number, chatId: string, question: string, options: string[]): Promise<any>;
+    getNumberId(serverId: number, number: string): Promise<any>;
     getMessageMedia(): any;
     private formatJid;
-    getAllContacts(): Promise<any[]>;
-    getAllGroups(): Promise<any[]>;
-    getGroupParticipantsDetailed(groupJid: string): Promise<any[]>;
+    getAllContacts(serverId?: number): Promise<any[]>;
+    getAllGroups(serverId?: number): Promise<any[]>;
+    getGroupParticipantsDetailed(serverId: number, groupJid: string): Promise<any[]>;
     private sendToRenderer;
 }
 export declare const whatsAppClient: WhatsAppClientSingleton;
-export {};
 //# sourceMappingURL=WhatsAppClient.d.ts.map

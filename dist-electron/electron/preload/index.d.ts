@@ -185,28 +185,57 @@ declare const api: {
         getDeviceId: () => Promise<any>;
     };
     whatsapp: {
-        connect: () => Promise<DbResult>;
-        disconnect: () => Promise<DbResult>;
-        logout: () => Promise<DbResult>;
-        clearSession: () => Promise<DbResult>;
-        getContacts: () => Promise<DbResult<any[]>>;
-        getGroups: () => Promise<DbResult<any[]>>;
-        getGroupParticipants: (groupJid: string) => Promise<DbResult<any[]>>;
+        connect: (serverId?: number) => Promise<DbResult>;
+        disconnect: (serverId?: number) => Promise<DbResult>;
+        logout: (serverId?: number) => Promise<DbResult>;
+        clearSession: (serverId?: number) => Promise<DbResult>;
+        sendPoll: (serverId: number, chatId: string, question: string, options: string[]) => Promise<DbResult>;
+        getContacts: (serverId?: number) => Promise<DbResult<any[]>>;
+        getGroups: (serverId?: number) => Promise<DbResult<any[]>>;
+        getGroupParticipants: (serverId: number, groupJid: string) => Promise<DbResult<any[]>>;
         importContacts: (contacts: any[]) => Promise<DbResult>;
-        importGroup: (group: any) => Promise<DbResult>;
-        getStatus: () => Promise<DbResult<{
+        importGroup: (serverId: number, group: any) => Promise<DbResult>;
+        getStatus: (serverId?: number) => Promise<DbResult<{
             isConnected: boolean;
             isInitializing: boolean;
             phoneNumber?: string;
         }>>;
-        onQrCode: (callback: (qrCode: string) => void) => () => Electron.IpcRenderer;
+        getStatusAll: () => Promise<DbResult<{
+            [key: number]: any;
+        }>>;
+        getPollVotes: (campaignId: number) => Promise<any>;
+        getPollSummary: (campaignId: number) => Promise<any>;
+        getPollServerStats: (campaignId: number) => Promise<any>;
+        exportPollExcel: (campaignId: number) => Promise<any>;
+        onQrCode: (callback: (data: {
+            serverId: number;
+            qrCode: string;
+        }) => void) => () => Electron.IpcRenderer;
         onReady: (callback: (data: {
+            serverId: number;
             phoneNumber?: string;
         }) => void) => () => Electron.IpcRenderer;
-        onAuthenticated: (callback: () => void) => () => Electron.IpcRenderer;
-        onDisconnected: (callback: () => void) => () => Electron.IpcRenderer;
-        onLog: (callback: (message: string) => void) => () => Electron.IpcRenderer;
-        onError: (callback: (error: string) => void) => () => Electron.IpcRenderer;
+        onStatus: (callback: (data: {
+            serverId: number;
+            status: any;
+        }) => void) => () => Electron.IpcRenderer;
+        onAuthenticated: (callback: (data: {
+            serverId: number;
+        }) => void) => () => Electron.IpcRenderer;
+        onDisconnected: (callback: (data: {
+            serverId: number;
+        }) => void) => () => Electron.IpcRenderer;
+        onReconnecting: (callback: (data: {
+            serverId: number;
+        }) => void) => () => Electron.IpcRenderer;
+        onLog: (callback: (data: {
+            serverId: number;
+            message: string;
+        }) => void) => () => Electron.IpcRenderer;
+        onError: (callback: (data: {
+            serverId: number;
+            error: string;
+        }) => void) => () => Electron.IpcRenderer;
     };
     console: {
         open: () => Promise<DbResult>;

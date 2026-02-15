@@ -270,7 +270,8 @@ export class StorageService {
     return db.campaigns.list();
   }
 
-  async getCampaignWithMessages(id: number): Promise<any> {
+  async getCampaignWithMessages(id: number | string): Promise<any> {
+    console.log(`[Storage] 📦 Fetching campaign with messages for ID: ${id} (Type: ${typeof id})`);
     try {
       // 1. Get Campaign
       let campaign = null;
@@ -280,15 +281,25 @@ export class StorageService {
           .select('*')
           .eq('id', id)
           .single();
-        if (!error && data) campaign = data;
+        if (!error && data) {
+          campaign = data;
+          console.log('[Storage] ✅ Found campaign in Cloud');
+        }
       }
 
       if (!campaign) {
         const campaigns = db.campaigns.list();
-        campaign = campaigns.find(c => c.id === id);
+        // Use == to handle string vs number mismatch from IPC
+        campaign = campaigns.find(c => c.id == (id as any));
+        if (campaign) {
+          console.log('[Storage] ✅ Found campaign in Local DB');
+        }
       }
 
-      if (!campaign) return null;
+      if (!campaign) {
+        console.error(`[Storage] ❌ Campaign NOT FOUND for ID: ${id}`);
+        return null;
+      }
 
       // 2. Get Messages
       let messages = [];
@@ -301,31 +312,37 @@ export class StorageService {
       }
 
       if (messages.length === 0) {
-        messages = db.campaignMessages.getByCampaign(id);
+        messages = db.campaignMessages.getByCampaign(id as any);
       }
 
       // Fallback: If no messages found in campaign_messages table, generate them from linked contacts
       // This is crucial for local mode where campaign_messages might not be pre-populated
       if (messages.length === 0) {
-        console.log('[Storage] No cached messages found, generating from campaign contacts...');
-        const contacts = db.campaigns.getContacts(id);
+        console.log('[Storage] No cached messages found, checking campaign contacts or linked group...');
+        let contacts = db.campaigns.getContacts(id as any);
+
+        // Fallback: If no direct campaign contacts, check the linked group
+        if (contacts.length === 0 && campaign.group_id) {
+          console.log(`[Storage] No explicit contacts for campaign ${id}, fetching from group ${campaign.group_id}`);
+          contacts = db.groups.getContacts(campaign.group_id);
+        }
 
         if (contacts && contacts.length > 0) {
           messages = contacts.map((contact: any) => ({
             id: `temp_${contact.id}`,
-            recipient_number: contact.phone,
-            recipient_name: contact.name,
-            message_content: campaign.message_template || '',
-            variables: contact.variables ? JSON.stringify(contact.variables) : '{}'
+            recipientNumber: contact.phone,
+            recipientName: contact.name,
+            templateText: campaign.message_template || '',
+            variables: contact.variables || {}
           }));
           console.log(`[Storage] Generated ${messages.length} messages from contacts`);
         } else {
-          console.log('[Storage] No contacts found for this campaign');
+          console.log('[Storage] No contacts found for this campaign (even in group)');
         }
       }
 
       // 3. Get Media for the campaign
-      const mediaFiles = await this.getCampaignMedia(id);
+      const mediaFiles = await this.getCampaignMedia(id as any);
 
       console.log('[Storage] getCampaignWithMessages - Template Image Debug:', {
         campaignId: id,
@@ -334,29 +351,43 @@ export class StorageService {
         templateName: campaign.template_image_name
       });
 
-      // 4. Construct CampaignTask object
+      // 4. Prepare Media Mappings
+      const mediaAttachments = mediaFiles.map((f: any) => ({
+        path: f.file_path,
+        type: f.file_type,
+        filename: f.file_name,
+        caption: f.caption // Added caption mapping
+      }));
+
+      const templateImage = campaign.template_image_path ? {
+        path: campaign.template_image_path,
+        name: campaign.template_image_name || 'image.jpg'
+      } : undefined;
+
+      // 5. Construct CampaignTask object
       return {
-        campaignId: String(campaign.id),
+        campaignId: Number(campaign.id),
         messages: messages.map((m: any) => ({
           id: String(m.id),
-          recipientNumber: m.recipient_number,
-          recipientName: m.recipient_name,
-          templateText: m.message_content, // Map DB content to templateText
-          variables: m.variables ? JSON.parse(m.variables) : {},
-          mediaAttachments: mediaFiles || [],
-          templateImage: campaign.template_image_path ? {
-            url: campaign.template_image_path,
-            caption: m.message_content // Template image uses message content as caption
-          } : undefined
+          recipientNumber: m.recipientNumber || m.recipient_number,
+          recipientName: m.recipientName || m.recipient_name,
+          templateText: m.templateText || m.message_content || campaign.message_template || '',
+          variables: typeof m.variables === 'string' ? JSON.parse(m.variables) : (m.variables || {}),
+          mediaAttachments: mediaAttachments.length > 0 ? mediaAttachments : undefined,
+          templateImage
         })),
         delaySettings: {
-          preset: campaign.delay_preset || 'random',
+          preset: campaign.delay_preset || 'medium',
           minDelay: campaign.delay_min,
           maxDelay: campaign.delay_max
-        }
+        },
+        sendingStrategy: campaign.sending_strategy || 'single',
+        serverId: campaign.server_id || 1,
+        isPoll: !!campaign.is_poll,
+        pollQuestion: campaign.poll_question,
+        pollOptions: campaign.poll_options ? (typeof campaign.poll_options === 'string' ? JSON.parse(campaign.poll_options) : campaign.poll_options) : undefined
       };
-
-    } catch (error) {
+    } catch (error: any) {
       ErrorLogger.error('[Storage] Failed to get campaign with messages', error);
       return null;
     }
@@ -368,6 +399,11 @@ export class StorageService {
       hasTemplateImage: !!campaign.template_image_data,
       templateImageName: campaign.template_image_name
     });
+    // Map frontend rotation boolean to backend strategy enum
+    if (campaign.rotation_enabled && !campaign.sending_strategy) {
+      campaign.sending_strategy = 'rotational';
+    }
+
     try {
       if (this.isCloudAvailable()) {
         const { data, error } = await this.supabase!
@@ -377,9 +413,12 @@ export class StorageService {
             status: campaign.status || 'draft',
             message_template: campaign.message_template,
             group_id: campaign.group_id,
-            delay_preset: campaign.delay_preset,
-            delay_min: campaign.delay_min,
             delay_max: campaign.delay_max,
+            sending_strategy: campaign.sending_strategy,
+            server_id: campaign.server_id,
+            is_poll: campaign.is_poll,
+            poll_question: campaign.poll_question,
+            poll_options: typeof campaign.poll_options === 'object' ? JSON.stringify(campaign.poll_options) : campaign.poll_options,
           })
           .select()
           .single();
@@ -420,6 +459,14 @@ export class StorageService {
   }
 
   async updateCampaign(id: number, updates: any): Promise<void> {
+    // Map frontend rotation boolean to backend strategy enum
+    if (updates.rotation_enabled) {
+      updates.sending_strategy = 'rotational';
+    } else if (updates.rotation_enabled === false) {
+      // Only set to single if explicitly disabled and no strategy provided
+      if (!updates.sending_strategy) updates.sending_strategy = 'single';
+    }
+
     try {
       if (this.isCloudAvailable()) {
         const { error } = await this.supabase!
@@ -454,6 +501,10 @@ export class StorageService {
       } catch (err) {
         ErrorLogger.error('[Storage] Failed to update template image:', err);
       }
+    }
+
+    if (updates.poll_options && typeof updates.poll_options === 'object') {
+      updates.poll_options = JSON.stringify(updates.poll_options);
     }
 
     db.campaigns.update(id, updates);

@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { QrCode, CheckCircle, XCircle, Loader2, Power, LogOut, ChevronDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -8,30 +9,36 @@ import { isElectronAvailable } from '@/renderer/utils/electronAPI';
 import { useWhatsApp } from '../contexts/WhatsAppContext';
 
 export function WhatsAppConnection() {
-  const { isConnected, isConnecting, qrCode, error, phoneNumber, setIsConnecting, setError, setQrCode, setIsConnected, setPhoneNumber } = useWhatsApp();
+  const { isConnected, isConnecting: ctxConnecting, qrCode, error: ctxError, phoneNumber } = useWhatsApp();
+  const [localConnecting, setLocalConnecting] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  const error = ctxError || localError;
+
+  const isConnecting = ctxConnecting || localConnecting;
 
   const handleConnect = async () => {
     if (!isElectronAvailable()) {
-      setError('This app must be run in Electron desktop mode');
+      setLocalError('This app must be run in Electron desktop mode');
       toast.error('This app must be run as an Electron desktop application');
       return;
     }
 
-    setIsConnecting(true);
-    setError(null);
-    setQrCode(null);
+    setLocalConnecting(true);
+    setLocalError(null);
+    // setQrCode(null);
 
     try {
       const result = await window.electronAPI.whatsapp.connect();
 
       if (!result.success) {
-        setError(result.error || 'Failed to start WhatsApp connection');
-        setIsConnecting(false);
+        setLocalError(result.error || 'Failed to start WhatsApp connection');
+        setLocalConnecting(false);
         toast.error(result.error || 'Failed to connect to WhatsApp');
       }
     } catch (err: any) {
-      setError(err.message || 'Failed to start WhatsApp connection');
-      setIsConnecting(false);
+      setLocalError(err.message || 'Failed to start WhatsApp connection');
+      setLocalConnecting(false);
       toast.error('Failed to connect to WhatsApp');
     }
   };
@@ -41,11 +48,8 @@ export function WhatsAppConnection() {
 
     try {
       await window.electronAPI.whatsapp.disconnect();
-      setIsConnected(false);
-      setQrCode(null);
-      setError(null);
-      setIsConnecting(false);
-      setPhoneNumber(null);
+      setLocalConnecting(false);
+      // Context updates state automatically via events
       toast.info('WhatsApp disconnected (session preserved)');
     } catch (err: any) {
       toast.error('Failed to disconnect');
@@ -57,11 +61,7 @@ export function WhatsAppConnection() {
 
     try {
       await window.electronAPI.whatsapp.logout();
-      setIsConnected(false);
-      setQrCode(null);
-      setError(null);
-      setIsConnecting(false);
-      setPhoneNumber(null);
+      setLocalConnecting(false);
       toast.success('WhatsApp logged out successfully');
     } catch (err: any) {
       toast.error('Failed to logout');
@@ -74,11 +74,7 @@ export function WhatsAppConnection() {
     try {
       const result = await window.electronAPI.whatsapp.clearSession();
       if (result.success) {
-        setIsConnected(false);
-        setQrCode(null);
-        setError(null);
-        setIsConnecting(false);
-        setPhoneNumber(null);
+        setLocalConnecting(false);
         toast.success('Session cleared! You will need to scan QR code again.');
       } else {
         toast.error(result.error || 'Failed to clear session');

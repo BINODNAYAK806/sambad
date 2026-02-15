@@ -28,28 +28,8 @@ import * as supportService from './supportService.js';
 import * as db from './db/index.js';
 
 
-// Helper function for message personalization
-function personalizeMessage(
-  template: string,
-  variables: Record<string, string>,
-  contactName?: string,
-  contactPhone?: string
-): string {
-  if (!template) return '';
 
-  // Use a replacer function for all {{variable}} patterns
-  return template.replace(/\{\{\s*([^}]+)\s*\}\}/g, (_match, key) => {
-    const varName = key.trim().toLowerCase();
 
-    // Handle standard fields
-    if (varName === 'name') return contactName || '';
-    if (varName === 'phone' || varName === 'mobile') return contactPhone || '';
-
-    // Handle v1-v10 and other custom variables
-    const value = variables[key.trim()] || variables[varName];
-    return value !== undefined ? value : '';
-  });
-}
 
 // --- Input Validation Schemas ---
 const ContactSchema = z.object({
@@ -73,16 +53,32 @@ const CampaignSchema = z.object({
   template_image_type: z.string().nullable().optional(),
   template_id: z.string().optional(),
   scheduled_at: z.string().datetime().nullable().optional(),
+  // Multi-session & Strategy
+  sending_strategy: z.string().optional(),
+  server_id: z.number().optional(),
+  // Polls
+  is_poll: z.boolean().nullable().optional(),
+  poll_question: z.string().nullable().optional(),
+  poll_options: z.string().nullable().optional(),
 });
 
 const GroupSchema = z.object({
   name: z.string().min(1),
 });
 
+// Import Campaign Services
+
+import {
+  executeCampaignWithServices,
+  stopCurrentCampaign,
+  pauseCurrentCampaign,
+  resumeCurrentCampaign
+} from './campaignExecutionService.js';
 // Campaign execution state
-let campaignShouldStop = false;
-let campaignIsPaused = false;
+let isCampaignRunning = false;
+
 let mainWindowRef: Electron.BrowserWindow | null = null;
+
 
 // Set main window reference for sending events
 export function setCampaignMainWindow(win: Electron.BrowserWindow) {
@@ -90,259 +86,77 @@ export function setCampaignMainWindow(win: Electron.BrowserWindow) {
 }
 
 // Simple async campaign executor with progress events
-async function executeCampaignAsync(campaignTask: any, whatsAppClient: any) {
-  campaignShouldStop = false;
-  let sentCount = 0;
-  let failedCount = 0;
-  const totalMessages = campaignTask.messages?.length || 0;
-  const failedMessages: any[] = []; // Track failed messages for download
-
-  console.log(`[Campaign] Starting execution for ${campaignTask.campaignId} with ${totalMessages} messages`);
-
-  // Create a campaign run record for tracking
-  let campaign: any = null;
-  let runId: number | null = null;
-  try {
-    campaign = await db.campaigns.getById(campaignTask.campaignId);
-    const campaignName = campaign?.name || `Campaign ${campaignTask.campaignId}`;
-    runId = db.campaignRuns.create(campaignTask.campaignId, campaignName, totalMessages);
-    console.log(`[Campaign] Created run record: ${runId}`);
-  } catch (runErr: any) {
-    console.warn('[Campaign] Failed to create run record:', runErr.message);
-  }
-
-  for (let i = 0; i < totalMessages; i++) {
-    if (campaignShouldStop) {
-      console.log('[Campaign] Stopped by user');
-      break;
-    }
-
-    // Wait while paused
-    while (campaignIsPaused && !campaignShouldStop) {
-      console.log('[Campaign] Paused, waiting...');
-      await new Promise(resolve => setTimeout(resolve, 1000));
-    }
-
-    // Check stop again after waiting
-    if (campaignShouldStop) {
-      console.log('[Campaign] Stopped by user');
-      break;
-    }
-
-    const message = campaignTask.messages[i];
-
-    try {
-      // Format phone number
-      let number = message.recipientNumber?.replace(/\D/g, '') || '';
-      if (number.length < 10) {
-        throw new Error('Invalid phone number');
-      }
-
-      // Get chat ID - validate number exists on WhatsApp
-      let chatId = `${number}@c.us`;
-      const numberId = await whatsAppClient.getNumberId(number);
-      if (!numberId) {
-        throw new Error('Number not on WhatsApp');
-      }
-      chatId = numberId._serialized;
-
-      // Prepare text content with variable substitution
-      // Use the shared personalizeMessage function to handle all variables (name, phone, v1-v10, etc.)
-      const content = personalizeMessage(
-        message.templateText || '',
-        message.variables || {},
-        message.recipientName || '',
-        message.recipientNumber || ''
-      );
-
-      const MessageMedia = whatsAppClient.getMessageMedia();
-
-      console.log('[Campaign] Template Image Check:', {
-        recipientNumber: message.recipientNumber,
-        hasTemplateImage: !!message.templateImage,
-        templateImageUrl: message.templateImage?.url,
-        hasMessageMedia: !!MessageMedia
-      });
-
-      // If template image exists, send it WITH the message text as caption
-      if (message.templateImage?.url && MessageMedia) {
-        try {
-          const mediaObj = MessageMedia.fromFilePath(message.templateImage.url);
-          // Send image with text message as caption
-          await whatsAppClient.sendMessage(chatId, mediaObj, { caption: content });
-          console.log(`[Campaign] Sent template image with caption to ${message.recipientNumber}`);
-        } catch (imgErr: any) {
-          console.warn(`[Campaign] Template image failed, sending text only:`, imgErr.message);
-          // Fallback: send text without image
-          await whatsAppClient.sendMessage(chatId, content);
-        }
-      } else {
-        // No template image - send text message only
-        if (content.trim()) {
-          await whatsAppClient.sendMessage(chatId, content);
-        }
-      }
-
-      // Handle additional media attachments (each with their own caption)
-      if (message.mediaAttachments && message.mediaAttachments.length > 0 && MessageMedia) {
-        for (const media of message.mediaAttachments) {
-          try {
-            if (media.file_path) {
-              const mediaObj = MessageMedia.fromFilePath(media.file_path);
-              // Send with caption if available
-              const rawCaption = media.caption || '';
-              const mediaCaption = personalizeMessage(
-                rawCaption,
-                message.variables || {},
-                message.recipientName,
-                message.recipientNumber
-              );
-              await whatsAppClient.sendMessage(chatId, mediaObj, { caption: mediaCaption });
-              console.log(`[Campaign] Sent media "${media.file_name}" with caption to ${message.recipientNumber}`);
-            }
-          } catch (mediaErr: any) {
-            console.warn(`[Campaign] Media send failed for ${media.file_name}:`, mediaErr.message);
-          }
-        }
-      }
-
-      sentCount++;
-      console.log(`[Campaign] Sent to ${message.recipientNumber} (${sentCount}/${totalMessages})`);
-
-      // Save sent message to database for reporting
-      if (runId) {
-        try {
-          db.campaignRuns.addMessage(runId, message.recipientNumber, message.recipientName || 'Unknown', 'sent');
-        } catch (e) { /* ignore db errors */ }
-      }
-
-    } catch (err: any) {
-      failedCount++;
-      const errorMessage = err.message || 'Unknown error';
-      console.error(`[Campaign] Failed to send to ${message.recipientNumber}:`, errorMessage);
-
-      // Track failed message for reporting
-      failedMessages.push({
-        recipientName: message.recipientName || 'Unknown',
-        recipientNumber: message.recipientNumber,
-        errorMessage: errorMessage,
-        timestamp: new Date().toISOString(),
-      });
-
-      // Save failed message to database for reporting/download
-      if (runId) {
-        try {
-          db.campaignRuns.addMessage(runId, message.recipientNumber, message.recipientName || 'Unknown', 'failed', errorMessage);
-        } catch (e) { /* ignore db errors */ }
-      }
-    }
-
-    // Send progress event to renderer
-    const progress = Math.round(((sentCount + failedCount) / totalMessages) * 100);
-    if (mainWindowRef && !mainWindowRef.isDestroyed()) {
-      mainWindowRef.webContents.send('campaign:progress', {
-        campaignId: campaignTask.campaignId,
-        progress,
-        sentCount,
-        failedCount,
-        totalMessages,
-        recipientName: message.recipientName,
-        recipientNumber: message.recipientNumber,
-      });
-    }
-
-    // Batch Delay: Pause for 2-5 minutes every 20 messages
-    if ((i + 1) % 20 === 0 && i < totalMessages - 1) {
-      const minBatchDelay = 2 * 60 * 1000; // 2 minutes
-      const maxBatchDelay = 5 * 60 * 1000; // 5 minutes
-      const batchDelay = minBatchDelay + Math.random() * (maxBatchDelay - minBatchDelay);
-
-      console.log(`[Campaign] Batch limit (20) reached. Pausing for ${Math.round(batchDelay / 1000)}s...`);
-      if (mainWindowRef && !mainWindowRef.isDestroyed()) {
-        mainWindowRef.webContents.send('campaign:status', { message: `Taking a break for ${Math.round(batchDelay / 60000)} min...` });
-      }
-
-      await new Promise(r => setTimeout(r, batchDelay));
-    }
-
-    // Delay between messages based on campaign settings
-    if (i < totalMessages - 1) {
-      const delaySettings = campaignTask.delaySettings || {};
-      let minDelay = 2000; // Default 2s
-      let maxDelay = 5000; // Default 5s
-
-      // Check if manual/custom range is specified (priority over presets)
-      if (delaySettings.preset === 'custom' && delaySettings.minDelay && delaySettings.maxDelay) {
-        // Use custom manual range (values are in seconds from frontend, convert to ms)
-        minDelay = delaySettings.minDelay * 1000;
-        maxDelay = delaySettings.maxDelay * 1000;
-        console.log(`[Campaign] Using CUSTOM delay range: ${minDelay / 1000}s - ${maxDelay / 1000}s`);
-      } else {
-        // Presets (values in ms)
-        switch (delaySettings.preset) {
-          case 'very-short':
-            minDelay = 1000;
-            maxDelay = 5000;
-            break;
-          case 'short':
-            minDelay = 5000;
-            maxDelay = 20000;
-            break;
-          case 'long':
-            minDelay = 50000;
-            maxDelay = 120000;
-            break;
-          case 'very-long':
-            minDelay = 120000;
-            maxDelay = 300000;
-            break;
-          case 'medium':
-          default:
-            minDelay = 20000;
-            maxDelay = 50000;
-            break;
-        }
-      }
-
-      const delay = minDelay + Math.random() * (maxDelay - minDelay);
-      console.log(`[Campaign] Waiting ${Math.round(delay / 1000)}s before next message (preset: ${delaySettings.preset || 'medium'})`);
-      await new Promise(r => setTimeout(r, delay));
-    }
-  }
-
-  // Update campaign status in database
-  try {
-    await storageService.updateCampaign(campaignTask.campaignId, {
-      status: campaignShouldStop ? 'stopped' : 'completed',
-      sent_count: sentCount,
-      failed_count: failedCount,
-      total_count: totalMessages,
-    });
-
-    // Update campaign run record
-    if (runId) {
-      db.campaignRuns.update(runId, sentCount, failedCount, campaignShouldStop ? 'stopped' : 'completed');
-      console.log(`[Campaign] Updated run ${runId} - Status: ${campaignShouldStop ? 'stopped' : 'completed'}`);
-    }
-  } catch (updateErr: any) {
-    console.warn('[Campaign] Failed to update campaign status:', updateErr.message);
-  }
-
-  // Send completion event
-  console.log(`[Campaign] Completed. Sent: ${sentCount}, Failed: ${failedCount}`);
-  if (mainWindowRef && !mainWindowRef.isDestroyed()) {
-    mainWindowRef.webContents.send('campaign:complete', {
-      campaignId: campaignTask.campaignId,
-      sentCount,
-      failedCount,
-      totalMessages,
-      failedMessages, // Include for immediate use if needed
-    });
-  }
-}
+// Simple async campaign executor with progress events
 
 export function updateIpcMainWindow(_mainWindow: Electron.BrowserWindow) {
   // WhatsApp window updates handled by ./whatsapp/whatsapp.ipc.ts
+}
+
+// Unified Campaign Start Logic
+async function startCampaignInternal(campaign: any) {
+  const { whatsAppClient } = await import('./whatsapp/index.js');
+  const win = (global as any).mainWindow as Electron.BrowserWindow | null;
+
+  // Ensure ID is a number, but handle strings gracefully
+  const cmpId = typeof campaign === 'object' ? (campaign.campaignId || campaign.id) : campaign;
+  console.log(`[Sambad IPC] Campaign Worker Start (Task): ${cmpId}`);
+
+  // Fetch fresh campaign data from DB to ensure all settings (delays, strategy, etc.) are latest
+  const fullCampaign = await storageService.getCampaignWithMessages(cmpId);
+  if (!fullCampaign) {
+    console.error(`[Sambad IPC] Error: Campaign ${cmpId} not found in storage.`);
+    throw new Error('Could not find campaign data in database.');
+  }
+
+  const strategy = fullCampaign.sendingStrategy || fullCampaign.sending_strategy || 'single';
+  const serverId = fullCampaign.serverId || fullCampaign.server_id || 1;
+  const statuses = whatsAppClient.getAllStatuses();
+  const anyReady = Object.values(statuses).some(s => s.isReady);
+  const specificReady = whatsAppClient.getStatus(serverId).isReady;
+
+  // Get list of available servers for better error messages
+  const availableServers = Object.keys(statuses)
+    .map(Number)
+    .filter(id => statuses[id].isReady)
+    .sort((a, b) => a - b);
+
+  console.log(`[IPC] Start Check: Campaign=${fullCampaign.campaignId}, Strategy=${strategy}, ServerId=${serverId}, Available Servers=[${availableServers.join(', ')}], Preset=${fullCampaign.delaySettings?.preset}`);
+
+  if (strategy === 'rotational' && !anyReady) {
+    throw new Error('No WhatsApp servers are connected. Please connect at least one server in Settings → WhatsApp Accounts.');
+  }
+  if (strategy === 'rotational' && availableServers.length === 1) {
+    console.warn(`[IPC] ⚠️ Rotational mode selected but only Server ${availableServers[0]} is connected. Rotation will not occur. Connect more servers for multi-server rotation.`);
+  }
+  if (strategy === 'single' && !specificReady) {
+    const availableMsg = availableServers.length > 0
+      ? ` Available servers: [${availableServers.join(', ')}]`
+      : ' No servers are connected.';
+    throw new Error(`WhatsApp Server ${serverId} is not connected.${availableMsg} Please connect it in Settings → WhatsApp Accounts.`);
+  }
+
+  if (isCampaignRunning) {
+    throw new Error('A campaign is already running. Please stop it before starting a new one.');
+  }
+
+  // Normalize the object with fresh data
+  const normalizedCampaign = {
+    ...fullCampaign,
+    sendingStrategy: strategy,
+    serverId: serverId
+  };
+
+  // Mark as running
+  isCampaignRunning = true;
+
+  // Execute with production-grade service (Backgrounded to unblock UI)
+  executeCampaignWithServices(normalizedCampaign, whatsAppClient, win)
+    .catch(err => console.error('[IPC] Background Campaign Error:', err))
+    .finally(() => {
+      isCampaignRunning = false;
+    });
+
+  console.log('[IPC] Campaign execution started in background');
 }
 
 export function registerIpcHandlers(mainWindow: Electron.BrowserWindow | null) {
@@ -885,39 +699,21 @@ export function registerIpcHandlers(mainWindow: Electron.BrowserWindow | null) {
 
     ipcMain.handle('campaigns:start', withPermission('campaigns', 'update', async (_event, id: number) => {
       try {
-        console.log('[Sambad IPC] Start Campaign:', id);
-
-        // Import WhatsApp client
-        const { whatsAppClient } = await import('./whatsapp/index.js');
-
-        // Check if WhatsApp is ready
-        const status = whatsAppClient.getStatus();
-        if (!status.isReady) {
-          return { success: false, error: 'WhatsApp is not connected. Please connect first.' };
-        }
-
-        // Fetch campaign with messages
+        console.log('[Sambad IPC] Start Campaign (ID):', id);
         const campaign = await storageService.getCampaignWithMessages(id);
-        if (!campaign) {
-          return { success: false, error: 'Campaign not found' };
-        }
+        if (!campaign) return { success: false, error: 'Campaign not found' };
 
-        console.log(`[Sambad IPC] Starting campaign ${id} with ${campaign.messages.length} messages`);
-
-        // Execute campaign in background (non-blocking)
-        executeCampaignAsync(campaign, whatsAppClient);
-
+        await startCampaignInternal(campaign);
         return { success: true, message: 'Campaign started' };
       } catch (error: any) {
-        console.error('[IPC] Campaign Start Failed:', error);
+        console.error('[IPC] Plural Start Error:', error);
         return { success: false, error: error.message };
       }
     }));
 
     ipcMain.handle('campaigns:stop', withPermission('campaigns', 'update', async (_event, id: number) => {
       console.log('[Sambad IPC] Stop Campaign:', id);
-      // Set global stop flag
-      campaignShouldStop = true;
+      stopCurrentCampaign();
       return { success: true, message: 'Campaign stop requested' };
     }));
 
@@ -1163,54 +959,53 @@ export function registerIpcHandlers(mainWindow: Electron.BrowserWindow | null) {
       }
     }));
 
-    ipcMain.handle('campaign:start', async (_event, campaignTask: any) => {
-      console.log('[Sambad IPC] Campaign Worker Start:', campaignTask.campaignId);
+    ipcMain.handle('campaign:start', withPermission('campaigns', 'update', async (_event, campaignTask: any) => {
+      // Redirect to unified plural handler if it's just an ID
+      if (typeof campaignTask === 'number') {
+        // We can't easily call the plural handler because it uses withPermission
+        // But we can call the shared logic
+        try {
+          const campaign = await storageService.getCampaignWithMessages(campaignTask);
+          if (!campaign) return { success: false, error: 'Campaign not found' };
+          await startCampaignInternal(campaign);
+          return { success: true, message: 'Campaign started' };
+        } catch (error: any) {
+          return { success: false, error: error.message };
+        }
+      }
+
+      console.log('[Sambad IPC] Campaign Worker Start (Task):', campaignTask.campaignId);
 
       try {
-        // Import WhatsApp client
-        const { whatsAppClient } = await import('./whatsapp/index.js');
-
-        // Check if WhatsApp is ready
-        const status = whatsAppClient.getStatus();
-        if (!status.isReady) {
-          return { success: false, error: 'WhatsApp is not connected. Please connect first.' };
-        }
-
-        // Execute campaign in background
-        executeCampaignAsync(campaignTask, whatsAppClient);
-
+        await startCampaignInternal(campaignTask);
         return { success: true, message: 'Campaign started' };
       } catch (error: any) {
-        console.error('[IPC] Campaign Start Error:', error);
+        console.error('[IPC] Singular Start Error:', error);
         return { success: false, error: error.message };
       }
-    });
+    }));
     ipcMain.handle('campaign:pause', withPermission('campaigns', 'update', async () => {
       console.log('[Sambad IPC] Pausing campaign');
-      campaignIsPaused = true;
-      if (mainWindowRef) {
-        mainWindowRef.webContents.send('campaign:paused');
+      pauseCurrentCampaign();
+      if (mainWindowRef && !mainWindowRef.isDestroyed()) {
+        mainWindowRef.webContents.send('campaign:paused', { campaignId: null });
       }
       return { success: true, message: 'Campaign paused' };
     }));
 
     ipcMain.handle('campaign:resume', withPermission('campaigns', 'update', async () => {
       console.log('[Sambad IPC] Resuming campaign');
-      campaignIsPaused = false;
-      if (mainWindowRef) {
-        mainWindowRef.webContents.send('campaign:resumed');
+      resumeCurrentCampaign();
+      if (mainWindowRef && !mainWindowRef.isDestroyed()) {
+        mainWindowRef.webContents.send('campaign:resumed', { campaignId: null });
       }
       return { success: true, message: 'Campaign resumed' };
     }));
 
     ipcMain.handle('campaign:stop', withPermission('campaigns', 'update', async () => {
-      console.log('[Sambad IPC] Stopping campaign');
-      campaignShouldStop = true;
-      campaignIsPaused = false; // Also unpause to allow loop to exit
-      if (mainWindowRef) {
-        mainWindowRef.webContents.send('campaign:stopped');
-      }
-      return { success: true, message: 'Campaign stopped' };
+      console.log('[Sambad IPC] Stopping campaign (request)');
+      stopCurrentCampaign();
+      return { success: true, message: 'Stop request acknowledged' };
     }));
 
     ipcMain.handle('campaign:status', withPermission('campaigns', 'read', async () => {

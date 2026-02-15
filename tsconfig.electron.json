@@ -16,6 +16,7 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
     "outDir": "dist-electron",
+    "rootDir": ".",
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
@@ -45,7 +46,10 @@
     "electron/main/autoUpdater.ts",
     "electron/main/supportService.ts",
     "electron/main/whatsapp/**/*.ts",
-    "electron/main/sentinel/**/*.ts"
+    "electron/main/sentinel/**/*.ts",
+    "electron/main/services/**/*.ts",
+    "electron/main/types/**/*.ts",
+    "electron/main/campaignExecutionService.ts"
   ],
   "exclude": [
     "node_modules",

@@ -60,9 +60,14 @@ export function CampaignRunner({ open, onOpenChange, campaign, onComplete }: Cam
     }
 
     const handleProgress = (_event: any, data: any) => {
-      console.log('[Campaign Runner] Progress:', data);
+      console.log('[Campaign Runner] Received progress update:', data);
 
-      // Ignore progress updates if campaign is in a terminal state
+      if (campaign && data.campaignId && String(data.campaignId) !== String(campaign.id)) {
+        console.log('[Campaign Runner] Progress update for different campaign, ignoring');
+        return;
+      }
+
+      // Force status to running if we receive progress
       setStatus((currentStatus) => {
         if (currentStatus === 'completed' || currentStatus === 'stopped' || currentStatus === 'error') {
           console.log('[Campaign Runner] Ignoring progress update - campaign in terminal state:', currentStatus);
@@ -80,12 +85,24 @@ export function CampaignRunner({ open, onOpenChange, campaign, onComplete }: Cam
 
     const handleComplete = (_event: any, data: any) => {
       console.log('[Campaign Runner] Complete:', data);
-      setStatus('completed');
+      setStatus((currentStatus) => {
+        if (currentStatus === 'stopped' || currentStatus === 'error') {
+          return currentStatus;
+        }
+        return 'completed';
+      });
       setProgress(100);
       setSentCount(data.sentCount || 0);
       setFailedCount(data.failedCount || 0);
       setCurrentRecipient(''); // Clear the current recipient display
-      toast.success(`Campaign completed! ${data.sentCount} sent, ${data.failedCount} failed`);
+
+      setStatus((currentStatus) => {
+        if (currentStatus === 'completed') {
+          toast.success(`Campaign completed! ${data.sentCount} sent, ${data.failedCount} failed`);
+        }
+        return currentStatus;
+      });
+
       onComplete();
     };
 
@@ -121,6 +138,12 @@ export function CampaignRunner({ open, onOpenChange, campaign, onComplete }: Cam
         return currentStatus;
       });
       toast.info('Campaign resumed');
+    };
+
+    const handleStopped = () => {
+      console.log('[Campaign Runner] Stopped');
+      setStatus('stopped');
+      toast.info('Campaign stopped');
     };
 
     const handleReconnecting = (_event: any, data: any) => {
@@ -180,6 +203,7 @@ export function CampaignRunner({ open, onOpenChange, campaign, onComplete }: Cam
     window.electronAPI.on('campaign:error', handleError);
     window.electronAPI.on('campaign:paused', handlePaused);
     window.electronAPI.on('campaign:resumed', handleResumed);
+    window.electronAPI.on('campaign:stopped', handleStopped);
     window.electronAPI.on('whatsapp:reconnecting', handleReconnecting);
     window.electronAPI.on('whatsapp:ready', handleReady);
     window.electronAPI.on('whatsapp:chromium-error', handleChromiumError);
@@ -193,6 +217,7 @@ export function CampaignRunner({ open, onOpenChange, campaign, onComplete }: Cam
         window.electronAPI.removeListener('campaign:error', handleError);
         window.electronAPI.removeListener('campaign:paused', handlePaused);
         window.electronAPI.removeListener('campaign:resumed', handleResumed);
+        window.electronAPI.removeListener('campaign:stopped', handleStopped);
         window.electronAPI.removeListener('whatsapp:reconnecting', handleReconnecting);
         window.electronAPI.removeListener('whatsapp:ready', handleReady);
         window.electronAPI.removeListener('whatsapp:chromium-error', handleChromiumError);
@@ -315,6 +340,11 @@ export function CampaignRunner({ open, onOpenChange, campaign, onComplete }: Cam
         campaignId: typeof campaign.id === 'string' ? parseInt(campaign.id, 10) : campaign.id,
         messages,
         delaySettings,
+        sendingStrategy: campaign.sending_strategy || 'single',
+        serverId: campaign.server_id || 1,
+        isPoll: !!campaign.is_poll,
+        pollQuestion: campaign.poll_question,
+        pollOptions: campaign.poll_options ? (typeof campaign.poll_options === 'string' ? JSON.parse(campaign.poll_options) : campaign.poll_options) : undefined,
       };
 
       console.log('[Campaign Runner] Starting campaign:', campaignTask);
@@ -358,8 +388,7 @@ export function CampaignRunner({ open, onOpenChange, campaign, onComplete }: Cam
   const handleStop = async () => {
     try {
       await window.electronAPI.campaign.stop();
-      setStatus('stopped');
-      toast.info('Campaign stopped');
+      // Status will be updated by 'campaign:stopped' event
     } catch (err: any) {
       console.error('[Campaign Runner] Failed to stop:', err);
       toast.error('Failed to stop campaign');

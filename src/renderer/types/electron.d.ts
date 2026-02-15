@@ -63,6 +63,11 @@ export type Campaign = {
   template_image_name?: string;
   template_image_size?: number;
   template_image_type?: string;
+  sending_strategy?: 'single' | 'rotational';
+  server_id?: number;
+  is_poll?: boolean;
+  poll_question?: string;
+  poll_options?: string;
 };
 
 export type Group = {
@@ -228,19 +233,30 @@ export interface ElectronAPI {
   };
 
   whatsapp: {
-    connect: () => Promise<DbResult>;
-    disconnect: () => Promise<DbResult>;
-    logout: () => Promise<DbResult>;
-    clearSession: () => Promise<DbResult>;
-    getContacts: () => Promise<DbResult<any[]>>;
-    getGroups: () => Promise<DbResult<any[]>>;
+    connect: (serverId?: number) => Promise<DbResult>;
+    disconnect: (serverId?: number) => Promise<DbResult>;
+    logout: (serverId?: number) => Promise<DbResult>;
+    clearSession: (serverId?: number) => Promise<DbResult>;
+    sendPoll: (serverId: number, chatId: string, question: string, options: string[]) => Promise<DbResult>;
+    getContacts: (serverId?: number) => Promise<DbResult<any[]>>;
+    getGroups: (serverId?: number) => Promise<DbResult<any[]>>;
+    getGroupParticipants: (serverId: number, groupJid: string) => Promise<DbResult<any[]>>;
     importContacts: (contacts: any[]) => Promise<DbResult>;
-    getStatus: () => Promise<DbResult<{ isConnected: boolean; isInitializing: boolean; phoneNumber?: string }>>;
-    onQrCode: (callback: (qrCode: string) => void) => () => void;
-    onReady: (callback: (data: { phoneNumber?: string }) => void) => () => void;
-    onAuthenticated: (callback: () => void) => () => void;
-    onDisconnected: (callback: () => void) => () => void;
-    onError: (callback: (error: string) => void) => () => void;
+    importGroup: (serverId: number, group: any) => Promise<DbResult>;
+    getStatus: (serverId?: number) => Promise<DbResult<{ isConnected: boolean; isInitializing: boolean; isReady: boolean; phoneNumber?: string; qrCode?: string; error?: string | null }>>;
+    getStatusAll: () => Promise<DbResult<{ [key: number]: any }>>;
+    getPollVotes: (campaignId: number) => Promise<DbResult<any[]>>;
+    getPollSummary: (campaignId: number) => Promise<DbResult<any>>;
+    getPollServerStats: (campaignId: number) => Promise<DbResult<any[]>>;
+    exportPollExcel: (campaignId: number) => Promise<DbResult<{ filePath: string }>>;
+    onQrCode: (callback: (data: { serverId: number; qrCode: string }) => void) => () => void;
+    onReady: (callback: (data: { serverId: number; phoneNumber?: string }) => void) => () => void;
+    onStatus: (callback: (data: { serverId: number; status: any }) => void) => () => void;
+    onAuthenticated: (callback: (data: { serverId: number }) => void) => () => void;
+    onDisconnected: (callback: (data: { serverId: number }) => void) => () => void;
+    onReconnecting: (callback: (data: { serverId: number }) => void) => () => void;
+    onLog: (callback: (data: { serverId: number; message: string }) => void) => () => void;
+    onError: (callback: (data: { serverId: number; error: string }) => void) => () => void;
   };
 
   console: {

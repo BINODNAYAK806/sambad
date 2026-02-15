@@ -17,6 +17,14 @@ import {
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from '@/components/ui/select';
+
 // Types
 interface ExtractedContact {
     id: string; // JID
@@ -37,19 +45,37 @@ export const Extractor = () => {
     const [groups, setGroups] = useState<ExtractedGroup[]>([]);
     const [isLoading, setIsLoading] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
+    const [selectedServer, setSelectedServer] = useState<number>(1);
+    const [serverStatuses, setServerStatuses] = useState<Record<number, any>>({});
+
+    useEffect(() => {
+        fetchServerStatus();
+    }, []);
 
     useEffect(() => {
         fetchData();
-    }, []);
+    }, [selectedServer]);
+
+    const fetchServerStatus = async () => {
+        try {
+            const result = await (window.electronAPI.whatsapp as any).getStatusAll();
+            if (result.success && result.statuses) {
+                setServerStatuses(result.statuses);
+            }
+        } catch (error) {
+            console.error('Failed to fetch server statuses:', error);
+        }
+    };
 
     const fetchData = async () => {
         setIsLoading(true);
         try {
-            const result = await window.electronAPI.whatsapp.getGroups();
+            const result = await (window.electronAPI.whatsapp as any).getGroups(selectedServer);
             if (result.success && result.data) {
                 setGroups(result.data);
             } else {
-                toast.error(result.error || 'Failed to fetch groups');
+                setGroups([]); // Clear on error or empty
+                if (result.error) toast.error(result.error);
             }
         } catch (error: any) {
             toast.error('Error fetching data: ' + error.message);
@@ -69,7 +95,7 @@ export const Extractor = () => {
         const ws = XLSX.utils.json_to_sheet(data);
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, 'Groups');
-        XLSX.writeFile(wb, `whatsapp_groups_${new Date().getTime()}.xlsx`);
+        XLSX.writeFile(wb, `whatsapp_groups_server${selectedServer}_${new Date().getTime()}.xlsx`);
         toast.success('Download started');
     };
 
@@ -78,14 +104,14 @@ export const Extractor = () => {
         setIsLoading(true);
         try {
             // Fetch DETAILED participants directly from WhatsApp
-            const participantsResult = await (window.electronAPI.whatsapp as any).getGroupParticipants(group.id);
+            const participantsResult = await (window.electronAPI.whatsapp as any).getGroupParticipants(selectedServer, group.id);
             let participants = group.participants;
             if (participantsResult.success && participantsResult.data) {
                 participants = participantsResult.data;
             }
 
             // Fetch contacts to get names
-            const contactsResult = await window.electronAPI.whatsapp.getContacts();
+            const contactsResult = await window.electronAPI.whatsapp.getContacts(selectedServer);
             const contactsMap: Record<string, string> = {};
 
             if (contactsResult.success && contactsResult.data) {
@@ -138,7 +164,7 @@ export const Extractor = () => {
 
         setIsLoading(true);
         try {
-            const result = await (window.electronAPI.whatsapp as any).importGroup(group);
+            const result = await (window.electronAPI.whatsapp as any).importGroup(selectedServer, group);
             if (result.success) {
                 toast.success(result.message);
             } else {
@@ -164,6 +190,22 @@ export const Extractor = () => {
                     <p className="text-muted-foreground">Extract participants and manage groups from WhatsApp</p>
                 </div>
                 <div className="flex space-x-2">
+                    <Select value={selectedServer.toString()} onValueChange={(v) => setSelectedServer(parseInt(v))}>
+                        <SelectTrigger className="w-[180px]">
+                            <SelectValue placeholder="Select Server" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            {[1, 2, 3, 4, 5].map((id) => {
+                                const status = serverStatuses[id];
+                                return (
+                                    <SelectItem key={id} value={id.toString()}>
+                                        Server {id} {status?.isReady ? '(Ready)' : '(Offline)'}
+                                    </SelectItem>
+                                );
+                            })}
+                        </SelectContent>
+                    </Select>
+
                     <Button variant="outline" onClick={fetchData} disabled={isLoading}>
                         <RefreshCw className={`mr-2 h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
                         Refresh Groups
@@ -178,7 +220,7 @@ export const Extractor = () => {
             <div className="space-y-4">
                 <div className="flex items-center gap-2">
                     <Users className="h-5 w-5 text-primary" />
-                    <h3 className="text-xl font-semibold">WhatsApp Groups</h3>
+                    <h3 className="text-xl font-semibold">WhatsApp Groups (Server {selectedServer})</h3>
                     <Badge variant="secondary" className="ml-2">{groups.length}</Badge>
                 </div>
 
@@ -248,7 +290,7 @@ export const Extractor = () => {
                                         ) : (
                                             <tr>
                                                 <td colSpan={5} className="p-4 text-center text-muted-foreground">
-                                                    {isLoading ? 'Loading...' : 'No groups found. Try refreshing.'}
+                                                    {isLoading ? 'Loading...' : `No groups found on Server ${selectedServer}. Try refreshing.`}
                                                 </td>
                                             </tr>
                                         )}

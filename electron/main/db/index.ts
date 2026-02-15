@@ -50,6 +50,11 @@ export type Campaign = {
   template_image_name?: string;
   template_image_size?: number;
   template_image_type?: string;
+  sending_strategy?: 'single' | 'rotational';
+  server_id?: number;
+  is_poll?: boolean;
+  poll_question?: string;
+  poll_options?: string;
 };
 
 export type GroupContact = {
@@ -166,6 +171,35 @@ function migrateSchema() {
     console.log('[Sambad DB] Adding completed_at to campaigns');
     db.exec('ALTER TABLE campaigns ADD COLUMN completed_at TEXT');
   }
+
+  // Add multi-server and poll columns
+  if (!columns.includes('sending_strategy')) {
+    console.log('[Sambad DB] Adding sending_strategy to campaigns');
+    db.exec('ALTER TABLE campaigns ADD COLUMN sending_strategy TEXT DEFAULT \'single\'');
+  }
+  if (!columns.includes('server_id')) {
+    db.exec('ALTER TABLE campaigns ADD COLUMN server_id INTEGER DEFAULT 1');
+  }
+  if (!columns.includes('is_poll')) {
+    db.exec('ALTER TABLE campaigns ADD COLUMN is_poll INTEGER DEFAULT 0');
+  }
+  if (!columns.includes('poll_question')) {
+    db.exec('ALTER TABLE campaigns ADD COLUMN poll_question TEXT');
+  }
+  if (!columns.includes('poll_options')) {
+    console.log('[Sambad DB] Adding poll_options to campaigns');
+    db.exec('ALTER TABLE campaigns ADD COLUMN poll_options TEXT');
+  }
+
+  // Add server_id to campaign_messages if it doesn't exist
+  const messageColumns = db.prepare('PRAGMA table_info(campaign_messages)').all().map((col: any) => col.name);
+  if (!messageColumns.includes('server_id')) {
+    console.log('[Sambad DB] Adding server_id to campaign_messages');
+    db.exec('ALTER TABLE campaign_messages ADD COLUMN server_id INTEGER');
+  }
+
+  // Ensure index exists (safe to run after column is confirmed)
+  db.exec('CREATE INDEX IF NOT EXISTS idx_campaign_messages_server_id ON campaign_messages(server_id)');
 }
 
 function createTables() {
@@ -267,6 +301,11 @@ function createTables() {
       template_image_name TEXT,
       template_image_size INTEGER,
       template_image_type TEXT,
+      sending_strategy TEXT DEFAULT 'single',
+      server_id INTEGER DEFAULT 1,
+      is_poll INTEGER DEFAULT 0,
+      poll_question TEXT,
+      poll_options TEXT,
       FOREIGN KEY(group_id) REFERENCES groups(id) ON DELETE SET NULL
     )
     `);
@@ -296,6 +335,7 @@ function createTables() {
       sent_at TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      server_id INTEGER,
       FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE,
       FOREIGN KEY(contact_id) REFERENCES contacts(id) ON DELETE SET NULL
     )
@@ -383,6 +423,79 @@ function createTables() {
   }
 
   console.log('[Sambad DB] Tables created successfully');
+
+  // Create indexes for performance optimization
+  console.log('[Sambad DB] Creating performance indexes...');
+
+  // Contacts indexes - phone is heavily queried
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_contacts_phone ON contacts(phone)`);
+
+  // Campaigns indexes - status and server_id are frequently filtered
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_campaigns_status ON campaigns(status)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_campaigns_server_id ON campaigns(server_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_campaigns_sending_strategy ON campaigns(sending_strategy)`);
+
+  // Campaign messages indexes - campaign_id is used in JOINs and WHERE clauses
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_campaign_messages_campaign_id ON campaign_messages(campaign_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_campaign_messages_status ON campaign_messages(status)`);
+
+
+
+  // Groups indexes - name is used in searches
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_groups_name ON groups(name)`);
+
+  // Group contacts indexes - both IDs used in JOINs
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_group_contacts_group_id ON group_contacts(group_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_group_contacts_contact_id ON group_contacts(contact_id)`);
+
+  // Campaign media indexes
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_campaign_media_campaign_id ON campaign_media(campaign_id)`);
+
+  // Campaign runs indexes
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_campaign_runs_campaign_id ON campaign_runs(campaign_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_campaign_runs_started_at ON campaign_runs(started_at)`);
+
+  // Create poll results tracking tables
+  console.log('[Sambad DB] Creating poll tracking tables...');
+
+  db.exec(`
+      CREATE TABLE IF NOT EXISTS poll_results (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        campaign_id INTEGER NOT NULL,
+        message_id TEXT UNIQUE NOT NULL,
+        poll_question TEXT NOT NULL,
+        poll_options TEXT NOT NULL,
+        total_votes INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
+      )
+    `);
+
+  db.exec(`
+      CREATE TABLE IF NOT EXISTS poll_votes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        poll_result_id INTEGER NOT NULL,
+        voter_jid TEXT NOT NULL,
+        voter_name TEXT,
+        voter_phone TEXT NOT NULL,
+        selected_option TEXT NOT NULL,
+        voted_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(poll_result_id, voter_jid),
+        FOREIGN KEY (poll_result_id) REFERENCES poll_results(id) ON DELETE CASCADE
+      )
+    `);
+
+  // Create indexes for poll tables
+  db.exec('CREATE INDEX IF NOT EXISTS idx_poll_results_campaign_id ON poll_results(campaign_id)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_poll_results_message_id ON poll_results(message_id)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_poll_votes_poll_result_id ON poll_votes(poll_result_id)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_poll_votes_voter_jid ON poll_votes(voter_jid)');
+
+  console.log('[Sambad DB] Poll tracking tables created successfully');
+
+  console.log('[Sambad DB] Performance indexes created successfully');
+
 }
 
 export function getSystemSetting(key: string): string | null {
@@ -686,9 +799,10 @@ export const campaigns = {
     const stmt = db.prepare(`
       INSERT INTO campaigns(
         name, status, message_template, group_id, delay_preset, delay_min, delay_max,
-        template_image_path, template_image_name, template_image_size, template_image_type
+        template_image_path, template_image_name, template_image_size, template_image_type,
+        sending_strategy, server_id, is_poll, poll_question, poll_options
       )
-  VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const result = stmt.run(
       campaign.name,
@@ -701,7 +815,12 @@ export const campaigns = {
       campaign.template_image_path || null,
       campaign.template_image_name || null,
       campaign.template_image_size || null,
-      campaign.template_image_type || null
+      campaign.template_image_type || null,
+      campaign.sending_strategy || 'single',
+      campaign.server_id || 1,
+      campaign.is_poll ? 1 : 0,
+      campaign.poll_question || null,
+      campaign.poll_options || null
     );
     return result.lastInsertRowid as number;
   },
@@ -774,6 +893,26 @@ export const campaigns = {
     if (campaign.completed_at !== undefined) {
       fields.push('completed_at = ?');
       values.push(campaign.completed_at);
+    }
+    if (campaign.sending_strategy !== undefined) {
+      fields.push('sending_strategy = ?');
+      values.push(campaign.sending_strategy);
+    }
+    if (campaign.server_id !== undefined) {
+      fields.push('server_id = ?');
+      values.push(campaign.server_id);
+    }
+    if (campaign.is_poll !== undefined) {
+      fields.push('is_poll = ?');
+      values.push(campaign.is_poll ? 1 : 0);
+    }
+    if (campaign.poll_question !== undefined) {
+      fields.push('poll_question = ?');
+      values.push(campaign.poll_question);
+    }
+    if (campaign.poll_options !== undefined) {
+      fields.push('poll_options = ?');
+      values.push(campaign.poll_options);
     }
 
     if (fields.length === 0) return;
@@ -1155,5 +1294,243 @@ export function closeDatabase(): void {
     db.close();
     db = null;
     console.log('[Sambad DB] Database closed');
+  }
+}
+
+// ==================== Poll Results Functions ====================
+
+export function createPollResult(campaignId: number, messageId: string, question: string, options: string[]): { success: boolean; error?: string } {
+  if (!db) return { success: false, error: 'Database not initialized' };
+  try {
+    const stmt = db.prepare(`
+      INSERT INTO poll_results (campaign_id, message_id, poll_question, poll_options)
+      VALUES (?, ?, ?, ?)
+    `);
+    stmt.run(campaignId, messageId, question, JSON.stringify(options));
+    return { success: true };
+  } catch (error: any) {
+    console.error('[Sambad DB] Failed to create poll result:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+export function storePollVote(messageId: string, voterJid: string, voterName: string, voterPhone: string, selectedOption: string): { success: boolean; error?: string } {
+  if (!db) return { success: false, error: 'Database not initialized' };
+  try {
+    console.log(`[Sambad DB] Attempting to store vote for msg=${messageId} from=${voterJid} phone=${voterPhone}`);
+
+    // Verify message exists (case-insensitive) and get campaign_id
+    let msg = db.prepare('SELECT id, campaign_id FROM campaign_messages WHERE LOWER(id) = LOWER(?)').get(messageId) as any;
+
+    if (!msg) {
+      console.warn(`[Sambad DB] Msg ${messageId} not found by ID. Trying phone search for ${voterPhone}...`);
+      // Fallback: Find latest message to this phone number (last 10 digits)
+      const phoneSuffix = voterPhone.slice(-10);
+      try {
+        msg = db.prepare(`
+                SELECT id, campaign_id 
+                FROM campaign_messages 
+                WHERE SUBSTR(REPLACE(REPLACE(REPLACE(recipient_number, '+', ''), ' ', ''), '-', ''), -10) = ?
+                ORDER BY created_at DESC 
+                LIMIT 1
+            `).get(phoneSuffix) as any;
+      } catch (e) {
+        console.error('[Sambad DB] Fallback search failed:', e);
+      }
+    }
+
+    if (!msg) {
+      console.error(`[Sambad DB] Poll vote error: Message ${messageId} not found in campaign_messages (checked case-insensitive)`);
+      return { success: false, error: 'Message not found' };
+    }
+
+    // Find poll_result via campaign
+    const stmt = db.prepare(`
+      INSERT INTO poll_votes (poll_result_id, voter_jid, voter_name, voter_phone, selected_option, voted_at, updated_at)
+      SELECT pr.id, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP 
+      FROM poll_results pr
+      WHERE pr.campaign_id = ?
+      ON CONFLICT(poll_result_id, voter_jid) 
+      DO UPDATE SET 
+        selected_option = excluded.selected_option,
+        updated_at = CURRENT_TIMESTAMP
+    `);
+
+    const result = stmt.run(voterJid, voterName, voterPhone, selectedOption, msg.campaign_id);
+
+    if (result.changes === 0) {
+      console.error(`[Sambad DB] Poll vote insertion failed. No poll_result found for campaign ${msg.campaign_id}`);
+    } else {
+      console.log(`[Sambad DB] Poll vote stored/updated. Changes: ${result.changes}`);
+    }
+
+    // Update total votes count
+    db.prepare(`
+      UPDATE poll_results 
+      SET total_votes = (
+        SELECT COUNT(DISTINCT voter_jid) 
+        FROM poll_votes 
+        WHERE poll_result_id = poll_results.id
+      )
+      WHERE campaign_id = ?
+    `).run(msg.campaign_id);
+
+    return { success: true };
+  } catch (error: any) {
+    console.error('[Sambad DB] Failed to store poll vote:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+export function getPollVotes(campaignId: number): { success: boolean; data?: any[]; error?: string } {
+  if (!db) return { success: false, error: 'Database not initialized' };
+  try {
+    const votes = db.prepare(`
+      SELECT DISTINCT
+        cm.recipient_name as name,
+        cm.recipient_number as phone,
+        COALESCE(pv.selected_option, '') as selected_option,
+        pv.voted_at
+      FROM campaign_messages cm
+      LEFT JOIN poll_results pr ON pr.campaign_id = cm.campaign_id
+      LEFT JOIN poll_votes pv ON pv.poll_result_id = pr.id
+        AND SUBSTR(REPLACE(REPLACE(REPLACE(cm.recipient_number, '+', ''), ' ', ''), '-', ''), -10) = SUBSTR(REPLACE(REPLACE(REPLACE(pv.voter_phone, '+', ''), ' ', ''), '-', ''), -10)
+      WHERE cm.campaign_id = ?
+      GROUP BY cm.recipient_number -- Ensure one row per recipient
+      ORDER BY cm.recipient_name
+    `).all(campaignId);
+
+    return { success: true, data: votes as any[] };
+  } catch (error: any) {
+    console.error('[Sambad DB] Failed to get poll votes:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+export function getPollSummary(campaignId: number): { success: boolean; data?: any; error?: string } {
+  if (!db) return { success: false, error: 'Database not initialized' };
+  try {
+    const summary = db.prepare(`
+      SELECT
+        pr.poll_question,
+        pr.poll_options,
+        pr.total_votes,
+        COUNT(DISTINCT cm.id) as total_sent
+      FROM poll_results pr
+      LEFT JOIN campaign_messages cm ON cm.campaign_id = pr.campaign_id
+      WHERE pr.campaign_id = ?
+      ORDER BY pr.created_at DESC -- Use the most recent poll result definition if duplicates exist
+      LIMIT 1
+    `).get(campaignId);
+
+    if (!summary) {
+      return { success: false, error: 'Poll not found' };
+    }
+
+    const voteBreakdown = db.prepare(`
+      SELECT
+        pv.selected_option,
+        COUNT(*) as count
+      FROM poll_votes pv
+      JOIN poll_results pr ON pr.id = pv.poll_result_id
+      WHERE pr.campaign_id = ?
+      GROUP BY pv.selected_option
+    `).all(campaignId);
+
+    return {
+      success: true,
+      data: {
+        ...summary,
+        voteBreakdown
+      }
+    };
+  } catch (error: any) {
+    console.error('[Sambad DB] Failed to get poll summary:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+export function getPollServerStats(campaignId: number): { success: boolean; data?: any[]; error?: string } {
+  if (!db) return { success: false, error: 'Database not initialized' };
+  try {
+    const stats = db.prepare(`
+      SELECT
+        cm.server_id,
+        COUNT(DISTINCT cm.id) as total_sent,
+        COUNT(DISTINCT CASE WHEN pv.id IS NOT NULL THEN cm.id END) as total_voted
+      FROM campaign_messages cm
+      LEFT JOIN poll_results pr ON pr.campaign_id = cm.campaign_id
+      LEFT JOIN poll_votes pv ON pv.poll_result_id = pr.id
+        AND SUBSTR(REPLACE(REPLACE(REPLACE(cm.recipient_number, '+', ''), ' ', ''), '-', ''), -10) = SUBSTR(REPLACE(REPLACE(REPLACE(pv.voter_phone, '+', ''), ' ', ''), '-', ''), -10)
+      WHERE cm.campaign_id = ?
+      GROUP BY cm.server_id
+      ORDER BY cm.server_id
+    `).all(campaignId);
+
+    return { success: true, data: stats as any[] };
+  } catch (error: any) {
+    console.error('[Sambad DB] Failed to get poll server stats:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+// ==================== Campaign Message Functions ====================
+
+export function createCampaignMessage(
+  campaignId: number,
+  messageId: string,
+  recipientNumber: string,
+  recipientName: string | undefined,
+  templateText: string,
+  status: 'pending' | 'sent' | 'failed',
+  serverId: number,
+  errorMessage?: string
+): void {
+  const db = getDatabase();
+  try {
+    const stmt = db.prepare(`
+        INSERT INTO campaign_messages (
+          id, campaign_id, recipient_number, recipient_name, template_text, status, server_id, error_message, sent_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+
+    stmt.run(
+      messageId,
+      campaignId,
+      recipientNumber,
+      recipientName || null,
+      templateText,
+      status,
+      serverId,
+      errorMessage || null,
+      status === 'sent' ? new Date().toISOString() : null
+    );
+  } catch (error) {
+    console.error(`[Sambad DB] Failed to create campaign message: ${error}`);
+  }
+}
+
+export function updateCampaignMessageStatus(
+  messageId: string,
+  status: 'sent' | 'failed',
+  errorMessage?: string
+): void {
+  const db = getDatabase();
+  try {
+    const stmt = db.prepare(`
+        UPDATE campaign_messages 
+        SET status = ?, error_message = ?, sent_at = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `);
+
+    // sent_at is only updated if status is 'sent'
+    stmt.run(
+      status,
+      errorMessage || null,
+      status === 'sent' ? new Date().toISOString() : null,
+      messageId
+    );
+  } catch (error) {
+    console.error(`[Sambad DB] Failed to update campaign message status: ${error}`);
   }
 }

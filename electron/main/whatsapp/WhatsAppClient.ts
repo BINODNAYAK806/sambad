@@ -30,61 +30,73 @@ export interface WhatsAppStatus {
     phoneNumber?: string;
 }
 
-class WhatsAppClientSingleton {
+export class WhatsAppClientSingleton {
     private static instance: WhatsAppClientSingleton;
-    private sock: WASocket | null = null;
+    private socks: Record<number, WASocket | null> = {};
     private mainWindow: BrowserWindow | null = null;
-    private state: WhatsAppState = 'idle';
-    private lastError: string | null = null;
+    private states: Record<number, WhatsAppState> = {};
+    private lastErrors: Record<number, string | null> = {};
     private userDataPath: string;
-    private phoneNumber: string | null = null;
-    private authState: any = null;
-    private saveCreds: any = null;
+    private phoneNumbers: Record<number, string | null> = {};
+    private authStates: Record<number, any> = {};
+    private saveCredsMap: Record<number, any> = {};
 
-    // Manual Store for contacts and chats
-    private contacts: Record<string, any> = {};
-    private storeFile: string;
-    private isDirty: boolean = false;
+    // Manual Store for contacts and chats (Per server)
+    private contactsMap: Record<number, Record<string, any>> = {};
+    private isDirtyMap: Record<number, boolean> = {};
 
     private constructor() {
         this.userDataPath = app.getPath('userData');
-        this.storeFile = path.join(this.userDataPath, 'baileys_store_v3.json');
+        console.log('[WhatsApp] Baileys multi-session client singleton created');
 
-        console.log('[WhatsApp] Baileys client singleton created');
+        // Initialize maps for 5 servers
+        for (let i = 1; i <= 5; i++) {
+            this.states[i] = 'idle';
+            this.lastErrors[i] = null;
+            this.phoneNumbers[i] = null;
+            this.contactsMap[i] = {};
+            this.isDirtyMap[i] = false;
+            this.loadStore(i);
+        }
 
-        // Load Store
-        this.loadStore();
-
-        // Save store every 10s if dirty
+        // Save stores every 10s if dirty
         setInterval(() => {
-            if (this.isDirty) {
-                this.saveStore();
+            for (let i = 1; i <= 5; i++) {
+                if (this.isDirtyMap[i]) {
+                    this.saveStore(i);
+                }
             }
         }, 10_000);
     }
 
-    private loadStore() {
+    private getStoreFile(serverId: number): string {
+        return path.join(this.userDataPath, `baileys_store_v3_server_${serverId}.json`);
+    }
+
+    private loadStore(serverId: number) {
         try {
-            if (fs.existsSync(this.storeFile)) {
-                const data = fs.readFileSync(this.storeFile, 'utf-8');
+            const storeFile = this.getStoreFile(serverId);
+            if (fs.existsSync(storeFile)) {
+                const data = fs.readFileSync(storeFile, 'utf-8');
                 const parsed = JSON.parse(data);
                 if (parsed.contacts) {
-                    this.contacts = parsed.contacts;
-                    console.log(`[WhatsApp] Loaded ${Object.keys(this.contacts).length} contacts from store`);
+                    this.contactsMap[serverId] = parsed.contacts;
+                    console.log(`[WhatsApp] [Server ${serverId}] Loaded ${Object.keys(this.contactsMap[serverId]).length} contacts from store`);
                 }
             }
         } catch (error) {
-            console.error('[WhatsApp] Failed to load store:', error);
+            console.error(`[WhatsApp] [Server ${serverId}] Failed to load store:`, error);
         }
     }
 
-    private saveStore() {
+    private saveStore(serverId: number) {
         try {
-            const data = JSON.stringify({ contacts: this.contacts });
-            fs.writeFileSync(this.storeFile, data, 'utf-8');
-            this.isDirty = false;
+            const storeFile = this.getStoreFile(serverId);
+            const data = JSON.stringify({ contacts: this.contactsMap[serverId] });
+            fs.writeFileSync(storeFile, data, 'utf-8');
+            this.isDirtyMap[serverId] = false;
         } catch (error) {
-            console.error('[WhatsApp] Failed to save store:', error);
+            console.error(`[WhatsApp] [Server ${serverId}] Failed to save store:`, error);
         }
     }
 
@@ -100,103 +112,131 @@ class WhatsAppClientSingleton {
         console.log('[WhatsApp] MainWindow set');
     }
 
-    getStatus(): WhatsAppStatus {
+    getStatus(serverId: number = 1): WhatsAppStatus {
         return {
-            state: this.state,
-            isReady: this.state === 'ready',
-            error: this.lastError || undefined,
-            phoneNumber: this.phoneNumber || undefined,
+            state: this.states[serverId] || 'idle',
+            isReady: this.states[serverId] === 'ready',
+            error: this.lastErrors[serverId] || undefined,
+            phoneNumber: this.phoneNumbers[serverId] || undefined,
         };
     }
 
-    private log(message: string): void {
-        console.log(message);
-        this.sendToRenderer('whatsapp:log', message);
+    getAllStatuses(): Record<number, WhatsAppStatus> {
+        const statuses: Record<number, WhatsAppStatus> = {};
+        for (let i = 1; i <= 5; i++) {
+            statuses[i] = this.getStatus(i);
+        }
+        return statuses;
     }
 
-    async initialize(): Promise<void> {
-        if (this.state === 'initializing' || this.state === 'ready') {
-            this.log('[WhatsApp] Already initializing or ready, skipping');
+    private lastLogTime: number = 0;
+
+    private log(serverId: number, message: string): void {
+        const fullMessage = `[Server ${serverId}] ${message}`;
+        console.log(fullMessage);
+
+        // Prevent frontend flooding: Buffer logs and send in batches/throttled
+        // For immediate critical errors, we might want to send directly, but for general logs:
+
+        // Simple throttling: Only send max 1 message per 100ms per server? 
+        // Or just don't send Baileys debug/trace logs?
+
+        // If message contains "Session error" or "Bad MAC", it's spam.
+        if (message.includes('Bad MAC') || message.includes('Session error')) {
+            const now = Date.now();
+            if (now - this.lastLogTime < 2000) return; // Only 1 error per 2s
+            this.lastLogTime = now;
+        }
+
+        this.sendToRenderer('whatsapp:log', { serverId, message: fullMessage });
+    }
+
+    async initialize(serverId: number = 1): Promise<void> {
+        if (this.states[serverId] === 'initializing' || this.states[serverId] === 'ready') {
+            this.log(serverId, 'Already initializing or ready, skipping');
             return;
         }
 
-        this.state = 'initializing';
-        this.lastError = null;
-        this.log('[WhatsApp] Starting Baileys initialization...');
+        this.states[serverId] = 'initializing';
+        this.lastErrors[serverId] = null;
+        this.log(serverId, 'Starting Baileys initialization...');
 
         // Force send initializing status
-        this.sendToRenderer('whatsapp:status', this.getStatus());
+        this.sendToRenderer('whatsapp:status', { serverId, status: this.getStatus(serverId) });
 
         try {
-            const authDir = path.join(this.userDataPath, '.baileys_auth');
-            this.log(`[WhatsApp] Auth directory: ${authDir}`);
+            const authDir = path.join(this.userDataPath, `.baileys_auth_server_${serverId}`);
+            this.log(serverId, `Auth directory: ${authDir}`);
 
             const { state, saveCreds } = await useMultiFileAuthState(authDir);
-            this.authState = state;
-            this.saveCreds = saveCreds;
-            this.log('[WhatsApp] Auth state loaded');
+            this.authStates[serverId] = state;
+            this.saveCredsMap[serverId] = saveCreds;
+            this.log(serverId, 'Auth state loaded');
 
             // Create a custom stream to send Baileys logs to frontend
             const logStream = {
                 write: (msg: string) => {
                     try {
                         const parsed = JSON.parse(msg);
-                        this.log(`[Baileys] ${parsed.level}: ${parsed.msg}`);
+                        this.log(serverId, `[Baileys] ${parsed.level}: ${parsed.msg}`);
                     } catch (e) {
-                        this.log(`[Baileys] ${msg.trim()}`);
+                        this.log(serverId, `[Baileys] ${msg.trim()}`);
                     }
                 }
             };
 
             const logger = pino({ level: 'debug' }, logStream);
 
-            this.log('[WhatsApp] Fetching latest WhatsApp version...');
+            this.log(serverId, 'Fetching latest WhatsApp version...');
             const { version, isLatest } = await fetchLatestBaileysVersion();
-            this.log(`[WhatsApp] Using version v${version.join('.')}, isLatest: ${isLatest}`);
+            this.log(serverId, `Using version v${version.join('.')}, isLatest: ${isLatest}`);
 
-            this.sock = makeWASocket({
+            const sock = makeWASocket({
                 version,
-                auth: this.authState,
+                auth: this.authStates[serverId],
                 logger,
                 printQRInTerminal: false,
                 browser: Browsers.ubuntu('Chrome'),
                 connectTimeoutMs: 60000,
             });
 
-            // Set up event listeners BEFORE any connection logic to ensure we don't miss anything
-            this.setupEventListeners();
+            this.socks[serverId] = sock;
 
-            this.log('[WhatsApp] Baileys socket created and listening');
+            // Set up event listeners BEFORE any connection logic to ensure we don't miss anything
+            this.setupEventListeners(serverId);
+
+            this.log(serverId, 'Baileys socket created and listening');
         } catch (err: any) {
-            console.error('[WhatsApp] Initialization failed:', err);
-            this.log(`[WhatsApp] Initialization failed: ${err.message}`);
-            this.state = 'error';
-            this.lastError = err.message || 'Unknown initialization error';
-            this.sendToRenderer('whatsapp:error', { error: this.lastError });
+            console.error(`[WhatsApp] [Server ${serverId}] Initialization failed:`, err);
+            this.log(serverId, `Initialization failed: ${err.message}`);
+            this.states[serverId] = 'error';
+            this.lastErrors[serverId] = err.message || 'Unknown initialization error';
+            this.sendToRenderer('whatsapp:error', { serverId, error: this.lastErrors[serverId] });
             throw err;
         }
     }
 
-    private setupEventListeners(): void {
-        if (!this.sock) return;
+    private setupEventListeners(serverId: number): void {
+        const sock = this.socks[serverId];
+        if (!sock) return;
 
         // --- Manual Store Sync Listeners ---
 
         // 1. Initial history/set events (Full sync)
-        this.sock.ev.on('messaging-history.set', ({ contacts, chats }) => {
-            this.log(`[WhatsApp] DEBUG: messaging-history.set fired. Contacts: ${contacts?.length || 0}, Chats: ${chats?.length || 0}`);
+        sock.ev.on('messaging-history.set', ({ contacts, chats }) => {
+            this.log(serverId, `DEBUG: messaging-history.set fired. Contacts: ${contacts?.length || 0}, Chats: ${chats?.length || 0}`);
             if (contacts) {
                 contacts.forEach(c => {
-                    this.contacts[c.id] = { ...this.contacts[c.id], ...c };
+                    this.contactsMap[serverId][c.id] = { ...this.contactsMap[serverId][c.id], ...c };
                 });
-                this.isDirty = true;
+                this.isDirtyMap[serverId] = true;
             }
             if (chats) {
                 chats.forEach(chat => {
                     if (chat.id.endsWith('@s.whatsapp.net')) {
-                        const existing = this.contacts[chat.id] || {};
+                        const existing = this.contactsMap[serverId][chat.id] || {};
                         const c = chat as any;
-                        this.contacts[chat.id] = {
+                        this.contactsMap[serverId][chat.id] = {
                             ...existing,
                             id: chat.id,
                             name: chat.name || existing.name || '',
@@ -204,28 +244,28 @@ class WhatsAppClientSingleton {
                         };
                     }
                 });
-                this.isDirty = true;
+                this.isDirtyMap[serverId] = true;
             }
         });
 
         // Some versions use .set instead of messaging-history.set
-        (this.sock.ev as any).on('contacts.set', ({ contacts }: any) => {
-            this.log(`[WhatsApp] DEBUG: contacts.set fired. Count: ${contacts?.length || 0}`);
+        (sock.ev as any).on('contacts.set', ({ contacts }: any) => {
+            this.log(serverId, `DEBUG: contacts.set fired. Count: ${contacts?.length || 0}`);
             if (contacts) {
                 contacts.forEach((c: any) => {
-                    this.contacts[c.id] = { ...this.contacts[c.id], ...c };
+                    this.contactsMap[serverId][c.id] = { ...this.contactsMap[serverId][c.id], ...c };
                 });
-                this.isDirty = true;
+                this.isDirtyMap[serverId] = true;
             }
         });
 
-        (this.sock.ev as any).on('chats.set', ({ chats }: any) => {
-            this.log(`[WhatsApp] DEBUG: chats.set fired. Count: ${chats?.length || 0}`);
+        (sock.ev as any).on('chats.set', ({ chats }: any) => {
+            this.log(serverId, `DEBUG: chats.set fired. Count: ${chats?.length || 0}`);
             if (chats) {
                 chats.forEach((chat: any) => {
                     if (chat.id.endsWith('@s.whatsapp.net')) {
-                        const existing = this.contacts[chat.id] || {};
-                        this.contacts[chat.id] = {
+                        const existing = this.contactsMap[serverId][chat.id] || {};
+                        this.contactsMap[serverId][chat.id] = {
                             ...existing,
                             id: chat.id,
                             name: chat.name || existing.name || '',
@@ -233,48 +273,48 @@ class WhatsAppClientSingleton {
                         };
                     }
                 });
-                this.isDirty = true;
+                this.isDirtyMap[serverId] = true;
             }
         });
 
         // 2. Contacts upsert/update
-        this.sock.ev.on('contacts.upsert', (update) => {
-            this.log(`[WhatsApp] DEBUG: contacts.upsert fired. Count: ${update?.length || 0}`);
+        sock.ev.on('contacts.upsert', (update) => {
+            this.log(serverId, `DEBUG: contacts.upsert fired. Count: ${update?.length || 0}`);
             let count = 0;
             update.forEach(c => {
                 if (c.id && c.id.endsWith('@s.whatsapp.net')) {
-                    this.contacts[c.id] = { ...this.contacts[c.id], ...c };
+                    this.contactsMap[serverId][c.id] = { ...this.contactsMap[serverId][c.id], ...c };
                     count++;
                 }
             });
             if (count > 0) {
-                this.isDirty = true;
+                this.isDirtyMap[serverId] = true;
             }
         });
 
-        this.sock.ev.on('contacts.update', (update) => {
+        sock.ev.on('contacts.update', (update) => {
             let count = 0;
             update.forEach(c => {
-                if (c.id && this.contacts[c.id]) {
-                    Object.assign(this.contacts[c.id], c);
+                if (c.id && this.contactsMap[serverId][c.id]) {
+                    Object.assign(this.contactsMap[serverId][c.id], c);
                     count++;
                 }
             });
             if (count > 0) {
-                this.isDirty = true;
-                this.log(`[WhatsApp] Contacts Update: Refreshed ${count} contacts`);
+                this.isDirtyMap[serverId] = true;
+                this.log(serverId, `Contacts Update: Refreshed ${count} contacts`);
             }
         });
 
         // 3. Chats upsert/update (Critical for contacts that haven't been "saved" but exist in chat list)
-        this.sock.ev.on('chats.upsert', (updates) => {
-            this.log(`[WhatsApp] DEBUG: chats.upsert fired. Count: ${updates?.length || 0}`);
+        sock.ev.on('chats.upsert', (updates) => {
+            this.log(serverId, `DEBUG: chats.upsert fired. Count: ${updates?.length || 0}`);
             let count = 0;
             updates.forEach(chat => {
                 if (chat.id.endsWith('@s.whatsapp.net')) {
-                    const existing = this.contacts[chat.id] || {};
+                    const existing = this.contactsMap[serverId][chat.id] || {};
                     const c = chat as any;
-                    this.contacts[chat.id] = {
+                    this.contactsMap[serverId][chat.id] = {
                         ...existing,
                         id: chat.id,
                         name: chat.name || existing.name || '',
@@ -284,20 +324,20 @@ class WhatsAppClientSingleton {
                 }
             });
             if (count > 0) {
-                this.isDirty = true;
-                this.log(`[WhatsApp] Chats Upsert: Captured ${count} contacts from chat list`);
+                this.isDirtyMap[serverId] = true;
+                this.log(serverId, `Chats Upsert: Captured ${count} contacts from chat list`);
             }
         });
 
-        this.sock.ev.on('chats.update', (updates) => {
-            this.log(`[WhatsApp] DEBUG: chats.update fired. Count: ${updates?.length || 0}`);
+        sock.ev.on('chats.update', (updates) => {
+            this.log(serverId, `DEBUG: chats.update fired. Count: ${updates?.length || 0}`);
             let count = 0;
             updates.forEach(chat => {
                 if (chat.id && chat.id.endsWith('@s.whatsapp.net')) {
-                    const existing = this.contacts[chat.id] || {};
+                    const existing = this.contactsMap[serverId][chat.id] || {};
                     const c = chat as any;
                     if (chat.name || c.notify) {
-                        this.contacts[chat.id] = {
+                        this.contactsMap[serverId][chat.id] = {
                             ...existing,
                             name: chat.name || existing.name || '',
                             notify: c.notify || existing.notify || ''
@@ -307,77 +347,111 @@ class WhatsAppClientSingleton {
                 }
             });
             if (count > 0) {
-                this.isDirty = true;
-                this.log(`[WhatsApp] Chats Update: Updated ${count} contact names`);
+                this.isDirtyMap[serverId] = true;
+                this.log(serverId, `Chats Update: Updated ${count} contact names`);
             }
         });
 
         // 4. Message upsert (Capture JIDs from incoming/outgoing traffic)
-        this.sock.ev.on('messages.upsert', ({ messages }) => {
+        sock.ev.on('messages.upsert', ({ messages }) => {
             messages.forEach(msg => {
                 const jid = msg.key.remoteJid;
                 if (jid && jid.endsWith('@s.whatsapp.net')) {
-                    if (!this.contacts[jid]) {
-                        this.contacts[jid] = {
+                    if (!this.contactsMap[serverId][jid]) {
+                        this.contactsMap[serverId][jid] = {
                             id: jid,
                             name: msg.pushName || '',
                             notify: msg.pushName || ''
                         };
-                        this.isDirty = true;
-                        this.log(`[WhatsApp] DEBUG: Discovered contact ${jid} from message traffic`);
-                    } else if (msg.pushName && !this.contacts[jid].name) {
-                        this.contacts[jid].name = msg.pushName;
-                        this.isDirty = true;
+                        this.isDirtyMap[serverId] = true;
+                        this.log(serverId, `DEBUG: Discovered contact ${jid} from message traffic`);
+                    } else if (msg.pushName && !this.contactsMap[serverId][jid].name) {
+                        this.contactsMap[serverId][jid].name = msg.pushName;
+                        this.isDirtyMap[serverId] = true;
                     }
                 }
             });
         });
 
         // 5. Message receipts (Another source of JIDs)
-        this.sock.ev.on('message-receipt.update', (updates) => {
+        sock.ev.on('message-receipt.update', (updates) => {
             updates.forEach(update => {
                 const jid = update.key.remoteJid;
-                if (jid && jid.endsWith('@s.whatsapp.net') && !this.contacts[jid]) {
-                    this.contacts[jid] = { id: jid, name: '' };
-                    this.isDirty = true;
-                    this.log(`[WhatsApp] DEBUG: Discovered contact ${jid} from receipt`);
+                if (jid && jid.endsWith('@s.whatsapp.net') && !this.contactsMap[serverId][jid]) {
+                    this.contactsMap[serverId][jid] = { id: jid, name: '' };
+                    this.isDirtyMap[serverId] = true;
                 }
             });
+        });
+
+        // ✅ Poll Vote Updates
+        sock.ev.on('messages.update', async (updates) => {
+            for (const update of updates) {
+                // Check if this is a poll vote update
+                if (update.update?.pollUpdates && update.key?.id) {
+                    const messageId = update.key.id;
+                    const pollUpdates = update.update.pollUpdates;
+
+                    this.log(serverId, `Poll votes received for message ${messageId}`);
+
+                    for (const pollUpdate of pollUpdates) {
+                        if (pollUpdate.pollUpdateMessageKey && pollUpdate.vote) {
+                            const voterJid = pollUpdate.pollUpdateMessageKey.participant || pollUpdate.pollUpdateMessageKey.remoteJid;
+                            const selectedOptions = pollUpdate.vote?.selectedOptions || [];
+
+                            if (voterJid && selectedOptions.length > 0) {
+                                // Get voter info
+                                const contact = this.contactsMap[serverId][voterJid];
+                                const voterName = contact?.name || contact?.notify || 'Unknown';
+                                const voterPhone = voterJid.split('@')[0];
+                                const selectedOption = selectedOptions[0]; // First option
+
+                                this.log(serverId, `Poll vote: ${voterName} (${voterPhone}) voted for option ${selectedOption}`);
+
+                                // Store in database - import at top of file
+                                const { storePollVote } = require('../db/index');
+                                storePollVote(messageId, voterJid, voterName, voterPhone, selectedOption);
+                            }
+                        }
+                    }
+                }
+            }
         });
 
         // --- Connection Updates ---
 
         // Connection updates (QR, connected, disconnected)
-        this.sock.ev.on('connection.update', async (update) => {
+        sock.ev.on('connection.update', async (update) => {
             const { connection, lastDisconnect, qr } = update;
 
             // QR Code
             if (qr) {
-                this.log('[WhatsApp] QR Code received');
-                this.state = 'qr';
+                this.log(serverId, 'QR Code received');
+                this.states[serverId] = 'qr';
                 try {
                     const dataUrl = await QRCode.toDataURL(qr);
-                    this.sendToRenderer('whatsapp:qr_code', { qrCode: dataUrl });
+                    this.sendToRenderer('whatsapp:qr_code', { serverId, qrCode: dataUrl });
                 } catch (err: any) {
-                    console.error('[WhatsApp] Failed to generate QR:', err);
-                    this.log(`[WhatsApp] Failed to generate QR: ${err.message}`);
-                    this.sendToRenderer('whatsapp:qr_code', { qrCode: qr });
+                    console.error(`[WhatsApp] [Server ${serverId}] Failed to generate QR:`, err);
+                    this.log(serverId, `Failed to generate QR: ${err.message}`);
+                    this.sendToRenderer('whatsapp:qr_code', { serverId, qrCode: qr });
                 }
             }
 
             // Connected
             if (connection === 'open') {
-                this.log('[WhatsApp] Connected and ready!');
-                this.state = 'ready';
+                this.log(serverId, 'Connected and ready!');
+                this.states[serverId] = 'ready';
 
                 // Get phone number
-                if (this.sock?.user?.id) {
-                    this.phoneNumber = this.sock.user.id.split(':')[0];
-                    this.log(`[WhatsApp] Logged in as: ${this.phoneNumber}`);
+                if (sock.user?.id) {
+                    this.phoneNumbers[serverId] = sock.user.id.split(':')[0];
+                    this.log(serverId, `Logged in as: ${this.phoneNumbers[serverId]}`);
                 }
 
-                this.sendToRenderer('whatsapp:authenticated', {});
-                this.sendToRenderer('whatsapp:ready', { phoneNumber: this.phoneNumber });
+                this.sendToRenderer('whatsapp:authenticated', { serverId });
+                this.sendToRenderer('whatsapp:ready', { serverId, phoneNumber: this.phoneNumbers[serverId] });
+                this.sendToRenderer('whatsapp:status', { serverId, status: this.getStatus(serverId) });
             }
 
             // Disconnected
@@ -385,122 +459,159 @@ class WhatsAppClientSingleton {
                 const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
                 const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
 
-                this.log(`[WhatsApp] Connection closed. StatusCode: ${statusCode}, Reconnect: ${shouldReconnect}`);
+                this.log(serverId, `Connection closed. StatusCode: ${statusCode}, Reconnect: ${shouldReconnect}`);
 
                 if (statusCode === DisconnectReason.loggedOut) {
-                    this.state = 'disconnected';
-                    this.sendToRenderer('whatsapp:disconnected', { reason: 'Logged out' });
+                    this.states[serverId] = 'disconnected';
+                    this.sendToRenderer('whatsapp:disconnected', { serverId, reason: 'Logged out' });
                 } else if (shouldReconnect) {
                     // Auto-reconnect on network issues
-                    this.log('[WhatsApp] Auto-reconnecting...');
-                    this.state = 'idle';
-                    setTimeout(() => this.initialize(), 3000);
+                    this.log(serverId, 'Auto-reconnecting...');
+                    this.states[serverId] = 'idle';
+                    this.sendToRenderer('whatsapp:reconnecting', { serverId, message: 'Network connection lost. Reconnecting...' });
+                    setTimeout(() => this.initialize(serverId), 3000);
                 } else {
-                    this.state = 'error';
-                    this.lastError = 'Connection failed';
-                    this.sendToRenderer('whatsapp:error', { error: this.lastError });
+                    this.states[serverId] = 'error';
+                    this.lastErrors[serverId] = 'Connection failed';
+                    this.sendToRenderer('whatsapp:error', { serverId, error: this.lastErrors[serverId] });
                 }
+                this.sendToRenderer('whatsapp:status', { serverId, status: this.getStatus(serverId) });
             }
         });
 
         // Credentials update (save session)
-        this.sock.ev.on('creds.update', this.saveCreds);
+        sock.ev.on('creds.update', this.saveCredsMap[serverId]);
     }
 
-    async disconnect(): Promise<void> {
-        if (this.sock) {
+    async disconnect(serverId: number = 1): Promise<void> {
+        const sock = this.socks[serverId];
+        if (sock) {
             try {
-                await this.sock?.logout();
-                console.log('[WhatsApp] Disconnected');
+                await sock.logout();
+                console.log(`[WhatsApp] [Server ${serverId}] Disconnected`);
             } catch (err) {
-                console.error('[WhatsApp] Error disconnecting:', err);
+                console.error(`[WhatsApp] [Server ${serverId}] Error disconnecting:`, err);
             }
-            this.sock = null;
+            this.socks[serverId] = null;
         }
-        this.state = 'idle';
+        this.states[serverId] = 'idle';
+        this.sendToRenderer('whatsapp:status', { serverId, status: this.getStatus(serverId) });
     }
 
-    async logout(): Promise<void> {
-        this.log('[WhatsApp] Logout requested...');
+    async logout(serverId: number = 1): Promise<void> {
+        this.log(serverId, 'Logout requested...');
 
         // 1. Call Baileys logout if connected
-        if (this.sock) {
+        const sock = this.socks[serverId];
+        if (sock) {
             try {
-                await this.sock.logout();
-                this.log('[WhatsApp] Baileys logout successful');
+                await sock.logout();
+                this.log(serverId, 'Baileys logout successful');
             } catch (err) {
-                console.error('[WhatsApp] Error during Baileys logout:', err);
+                console.error(`[WhatsApp] [Server ${serverId}] Error during Baileys logout:`, err);
             }
-            this.sock = null;
+            this.socks[serverId] = null;
         }
 
         // 2. Clear session files
-        const authDir = path.join(this.userDataPath, '.baileys_auth');
+        const authDir = path.join(this.userDataPath, `.baileys_auth_server_${serverId}`);
         try {
             if (fs.existsSync(authDir)) {
                 fs.rmSync(authDir, { recursive: true, force: true });
-                this.log('[WhatsApp] Session files cleared successfully');
+                this.log(serverId, 'Session files cleared successfully');
             }
         } catch (err) {
-            console.error('[WhatsApp] Error clearing session files:', err);
+            console.error(`[WhatsApp] [Server ${serverId}] Error clearing session files:`, err);
         }
 
         // 3. Reset state
-        this.state = 'idle';
-        this.authState = null;
-        this.saveCreds = null;
-        this.phoneNumber = null;
+        this.states[serverId] = 'idle';
+        this.authStates[serverId] = null;
+        this.saveCredsMap[serverId] = null;
+        this.phoneNumbers[serverId] = null;
 
         // 4. Notify frontend
-        this.sendToRenderer('whatsapp:disconnected', { reason: 'logout' });
-        this.sendToRenderer('whatsapp:status', this.getStatus());
+        this.sendToRenderer('whatsapp:disconnected', { serverId, reason: 'logout' });
+        this.sendToRenderer('whatsapp:status', { serverId, status: this.getStatus(serverId) });
 
-        this.log('[WhatsApp] Logout complete - session cleared');
+        this.log(serverId, 'Logout complete - session cleared');
     }
 
-    async sendMessage(chatId: string, content: string | any, options?: any): Promise<any> {
-        if (this.state !== 'ready' || !this.sock) {
-            throw new Error('WhatsApp client is not ready');
+    async sendMessage(serverId: number, chatId: string, content: string | any, options?: any): Promise<any> {
+        const sock = this.socks[serverId];
+        if (this.states[serverId] !== 'ready' || !sock) {
+            throw new Error(`WhatsApp server ${serverId} is not ready`);
         }
 
         const jid = this.formatJid(chatId);
 
         // If content is media (has mimetype, data, filename)
         if (content.mimetype && content.data) {
+            console.log(`[WhatsApp] 📄 Sending media message to ${jid} - Mime: ${content.mimetype}`);
             const buffer = Buffer.from(content.data, 'base64');
             const messageContent: any = {};
 
             // Determine media type
             if (content.mimetype.startsWith('image/')) {
                 messageContent.image = buffer;
+                console.log(`[WhatsApp] 🖼️ Classified as IMAGE`);
             } else if (content.mimetype.startsWith('video/')) {
                 messageContent.video = buffer;
+                console.log(`[WhatsApp] 🎥 Classified as VIDEO`);
             } else if (content.mimetype === 'application/pdf') {
                 messageContent.document = buffer;
                 messageContent.fileName = content.filename || 'document.pdf';
+                messageContent.mimetype = 'application/pdf';
+                console.log(`[WhatsApp] 📄 Classified as PDF`);
             } else {
                 messageContent.document = buffer;
                 messageContent.fileName = content.filename || 'file';
+                messageContent.mimetype = content.mimetype;
+                console.log(`[WhatsApp] 📂 Classified as DOCUMENT`);
             }
 
             // Add caption if provided
             if (options?.caption) {
+                console.log(`[WhatsApp] 🏷️ Adding caption to media: "${options.caption.substring(0, 50)}${options.caption.length > 50 ? '...' : ''}"`);
                 messageContent.caption = options.caption;
+            } else {
+                console.warn(`[WhatsApp] ⚠️ No caption provided in options for media message`);
             }
 
-            return await this.sock.sendMessage(jid, messageContent);
+            console.log(`[WhatsApp] 📤 Final Baileys Payload Keys: ${Object.keys(messageContent).join(', ')}`);
+            const result = await sock.sendMessage(jid, messageContent);
+            console.log(`[WhatsApp] ✅ Media message sent successfully`);
+            return result;
         }
 
         // Text message
-        return await this.sock.sendMessage(jid, { text: content });
+        return await sock.sendMessage(jid, { text: content });
     }
 
-    async getNumberId(number: string): Promise<any> {
-        if (!this.sock) return null;
+    async sendPoll(serverId: number, chatId: string, question: string, options: string[]): Promise<any> {
+        const sock = this.socks[serverId];
+        if (this.states[serverId] !== 'ready' || !sock) {
+            throw new Error(`WhatsApp server ${serverId} is not ready`);
+        }
+
+        const jid = this.formatJid(chatId);
+
+        return await sock.sendMessage(jid, {
+            poll: {
+                name: question,
+                values: options,
+                selectableCount: 1
+            }
+        });
+    }
+
+    async getNumberId(serverId: number, number: string): Promise<any> {
+        const sock = this.socks[serverId];
+        if (!sock) return null;
 
         try {
             const jid = this.formatJid(number);
-            const results = await this.sock.onWhatsApp(jid);
+            const results = await sock.onWhatsApp(jid);
 
             if (!results || results.length === 0) {
                 return null;
@@ -512,7 +623,7 @@ class WhatsAppClientSingleton {
             }
             return null;
         } catch (err) {
-            console.error('[WhatsApp] Error checking number:', err);
+            console.error(`[WhatsApp] [Server ${serverId}] Error checking number:`, err);
             return null;
         }
     }
@@ -520,11 +631,21 @@ class WhatsAppClientSingleton {
     getMessageMedia(): any {
         // Return a helper object for creating media messages
         return {
-            fromFilePath: (filePath: string) => {
+            fromFilePath: (filePath: string, typeHint?: string) => {
+                if (!fs.existsSync(filePath)) {
+                    throw new Error(`File not found: ${filePath}`);
+                }
                 const data = fs.readFileSync(filePath);
                 const base64 = data.toString('base64');
-                const mimetype = mime.lookup(filePath) || 'application/octet-stream';
+                let mimetype = mime.lookup(filePath) || 'application/octet-stream';
                 const filename = path.basename(filePath);
+
+                // If mimetype detection failed, use the typeHint from DB
+                if (mimetype === 'application/octet-stream' && typeHint) {
+                    if (typeHint === 'image') mimetype = 'image/jpeg';
+                    else if (typeHint === 'video') mimetype = 'video/mp4';
+                    else if (typeHint === 'pdf') mimetype = 'application/pdf';
+                }
 
                 return {
                     mimetype,
@@ -548,8 +669,9 @@ class WhatsAppClientSingleton {
         return `${cleaned}@s.whatsapp.net`;
     }
 
-    async getAllContacts(): Promise<any[]> {
-        const rawValues = Object.values(this.contacts);
+    async getAllContacts(serverId: number = 1): Promise<any[]> {
+        const contacts = this.contactsMap[serverId] || {};
+        const rawValues = Object.values(contacts);
 
         // Simple mapping: ID and Name
         const result = rawValues
@@ -562,15 +684,16 @@ class WhatsAppClientSingleton {
             }))
             .sort((a, b) => (a.name || 'z').localeCompare(b.name || 'z'));
 
-        console.log(`[WhatsApp] getAllContacts: Returning ${result.length} user contacts`);
+        console.log(`[WhatsApp] [Server ${serverId}] getAllContacts: Returning ${result.length} user contacts`);
         return result;
     }
 
-    async getAllGroups(): Promise<any[]> {
-        if (!this.sock) return [];
+    async getAllGroups(serverId: number = 1): Promise<any[]> {
+        const sock = this.socks[serverId];
+        if (!sock) return [];
 
         try {
-            const groups = await this.sock.groupFetchAllParticipating();
+            const groups = await sock.groupFetchAllParticipating();
             const groupList = Object.values(groups);
 
             return groupList.map((g: any) => ({
@@ -593,17 +716,18 @@ class WhatsAppClientSingleton {
                 })
             }));
         } catch (error) {
-            console.error('[WhatsApp] Failed to fetch groups:', error);
+            console.error(`[WhatsApp] [Server ${serverId}] Failed to fetch groups:`, error);
             return [];
         }
     }
 
     // Fetch detailed participants for a specific group (includes phone_number attr)
-    async getGroupParticipantsDetailed(groupJid: string): Promise<any[]> {
-        if (!this.sock) return [];
+    async getGroupParticipantsDetailed(serverId: number, groupJid: string): Promise<any[]> {
+        const sock = this.socks[serverId];
+        if (!sock) return [];
 
         try {
-            const metadata = await this.sock.groupMetadata(groupJid);
+            const metadata = await sock.groupMetadata(groupJid);
             return metadata.participants.map((p: any) => {
                 const realJid = p.jid || p.id;
                 const phone = realJid ? realJid.split('@')[0] : null;
@@ -617,7 +741,7 @@ class WhatsAppClientSingleton {
                 };
             });
         } catch (error) {
-            console.error('[WhatsApp] Failed to fetch group participants:', error);
+            console.error(`[WhatsApp] [Server ${serverId}] Failed to fetch group participants:`, error);
             return [];
         }
     }

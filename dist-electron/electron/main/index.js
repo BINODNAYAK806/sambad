@@ -153,6 +153,7 @@ function createWindow() {
         //       └── electron/
         //           ├── main/
         //           └── preload/
+        //
         const appPath = app.getAppPath();
         const htmlPath = path.join(appPath, 'dist', 'index.html');
         console.log('[Sambad] Running in production mode');
@@ -195,6 +196,7 @@ app.whenReady().then(() => {
         registerIpcHandlers(null); // Register globally, not per window
         const win = createWindow();
         if (win) {
+            global.mainWindow = win; // Attach for global access
             updateIpcMainWindow(win);
             setCampaignMainWindow(win); // For sending campaign progress events
             // Register WhatsApp handlers with window reference

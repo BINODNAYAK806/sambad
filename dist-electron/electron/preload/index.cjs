@@ -133,49 +133,59 @@ const api = {
         getDeviceId: () => electron_1.ipcRenderer.invoke('sentinel:get-device-id'),
     },
     whatsapp: {
-        connect: () => electron_1.ipcRenderer.invoke('whatsapp:connect'),
-        disconnect: () => electron_1.ipcRenderer.invoke('whatsapp:disconnect'),
-        logout: () => electron_1.ipcRenderer.invoke('whatsapp:logout'),
-        clearSession: () => electron_1.ipcRenderer.invoke('whatsapp:clearSession'),
-        getContacts: () => electron_1.ipcRenderer.invoke('whatsapp:get-contacts'),
-        getGroups: () => electron_1.ipcRenderer.invoke('whatsapp:get-groups'),
-        getGroupParticipants: (groupJid) => electron_1.ipcRenderer.invoke('whatsapp:get-group-participants', groupJid),
+        connect: (serverId) => electron_1.ipcRenderer.invoke('whatsapp:connect', serverId),
+        disconnect: (serverId) => electron_1.ipcRenderer.invoke('whatsapp:disconnect', serverId),
+        logout: (serverId) => electron_1.ipcRenderer.invoke('whatsapp:logout', serverId),
+        clearSession: (serverId) => electron_1.ipcRenderer.invoke('whatsapp:clearSession', serverId),
+        sendPoll: (serverId, chatId, question, options) => electron_1.ipcRenderer.invoke('whatsapp:send-poll', serverId, chatId, question, options),
+        getContacts: (serverId) => electron_1.ipcRenderer.invoke('whatsapp:get-contacts', serverId),
+        getGroups: (serverId) => electron_1.ipcRenderer.invoke('whatsapp:get-groups', serverId),
+        getGroupParticipants: (serverId, groupJid) => electron_1.ipcRenderer.invoke('whatsapp:get-group-participants', serverId, groupJid),
         importContacts: (contacts) => electron_1.ipcRenderer.invoke('whatsapp:import-contacts', contacts),
-        importGroup: (group) => electron_1.ipcRenderer.invoke('whatsapp:import-group', group),
-        getStatus: () => electron_1.ipcRenderer.invoke('whatsapp:status'),
+        importGroup: (serverId, group) => electron_1.ipcRenderer.invoke('whatsapp:import-group', serverId, group),
+        getStatus: (serverId) => electron_1.ipcRenderer.invoke('whatsapp:status', serverId),
+        getStatusAll: () => electron_1.ipcRenderer.invoke('whatsapp:status-all'),
+        getPollVotes: (campaignId) => electron_1.ipcRenderer.invoke('whatsapp:get-poll-votes', campaignId),
+        getPollSummary: (campaignId) => electron_1.ipcRenderer.invoke('whatsapp:get-poll-summary', campaignId),
+        getPollServerStats: (campaignId) => electron_1.ipcRenderer.invoke('whatsapp:get-poll-server-stats', campaignId),
+        exportPollExcel: (campaignId) => electron_1.ipcRenderer.invoke('whatsapp:export-poll-excel', campaignId),
         onQrCode: (callback) => {
-            const listener = (_event, data) => {
-                if (data.qrCode)
-                    callback(data.qrCode);
-            };
+            const listener = (_event, data) => callback(data);
             electron_1.ipcRenderer.on('whatsapp:qr_code', listener);
             return () => electron_1.ipcRenderer.removeListener('whatsapp:qr_code', listener);
         },
         onReady: (callback) => {
-            const listener = (_event, data) => callback(data || {});
+            const listener = (_event, data) => callback(data);
             electron_1.ipcRenderer.on('whatsapp:ready', listener);
             return () => electron_1.ipcRenderer.removeListener('whatsapp:ready', listener);
         },
+        onStatus: (callback) => {
+            const listener = (_event, data) => callback(data);
+            electron_1.ipcRenderer.on('whatsapp:status', listener);
+            return () => electron_1.ipcRenderer.removeListener('whatsapp:status', listener);
+        },
         onAuthenticated: (callback) => {
-            const listener = () => callback();
+            const listener = (_event, data) => callback(data);
             electron_1.ipcRenderer.on('whatsapp:authenticated', listener);
             return () => electron_1.ipcRenderer.removeListener('whatsapp:authenticated', listener);
         },
         onDisconnected: (callback) => {
-            const listener = () => callback();
+            const listener = (_event, data) => callback(data);
             electron_1.ipcRenderer.on('whatsapp:disconnected', listener);
             return () => electron_1.ipcRenderer.removeListener('whatsapp:disconnected', listener);
         },
+        onReconnecting: (callback) => {
+            const listener = (_event, data) => callback(data);
+            electron_1.ipcRenderer.on('whatsapp:reconnecting', listener);
+            return () => electron_1.ipcRenderer.removeListener('whatsapp:reconnecting', listener);
+        },
         onLog: (callback) => {
-            const listener = (_event, message) => callback(message);
+            const listener = (_event, data) => callback(data);
             electron_1.ipcRenderer.on('whatsapp:log', listener);
             return () => electron_1.ipcRenderer.removeListener('whatsapp:log', listener);
         },
         onError: (callback) => {
-            const listener = (_event, data) => {
-                if (data.error)
-                    callback(data.error);
-            };
+            const listener = (_event, data) => callback(data);
             electron_1.ipcRenderer.on('whatsapp:error', listener);
             return () => electron_1.ipcRenderer.removeListener('whatsapp:error', listener);
         },
