@@ -1,1 +1,0 @@
-{"version":3,"file":"whatsapp.session.d.ts","sourceRoot":"","sources":["../../../../electron/main/whatsapp/whatsapp.session.ts"],"names":[],"mappings":"AAIA,qBAAa,eAAe;IACxB,OAAO,CAAC,MAAM,CAAC,gBAAgB,CAAsB;IACrD,OAAO,CAAC,MAAM,CAAC,qBAAqB,CAAc;WAEpC,cAAc,IAAI,MAAM;WAQxB,UAAU,IAAI,OAAO;WASrB,YAAY;CAY7B"}

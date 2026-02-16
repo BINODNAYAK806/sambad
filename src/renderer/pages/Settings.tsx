@@ -346,7 +346,7 @@ export function Settings() {
                   </div>
 
                   <div className="flex gap-2">
-                    {updateStatus === 'idle' || updateStatus === 'not-available' || updateStatus === 'error' ? (
+                    {updateStatus === 'idle' || updateStatus === 'checking' || updateStatus === 'not-available' || updateStatus === 'error' ? (
                       <Button
                         size="sm"
                         variant="outline"
