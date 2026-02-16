@@ -335,6 +335,17 @@ export interface ElectronAPI {
     setPermissions: (userId: number, permissions: any) => Promise<DbResult<any>>;
   };
 
+  updater: {
+    checkForUpdates: () => Promise<DbResult>;
+    downloadUpdate: () => Promise<DbResult>;
+    installUpdate: () => Promise<DbResult>;
+    onUpdateAvailable: (callback: (info: any) => void) => () => void;
+    onUpdateNotAvailable: (callback: () => void) => () => void;
+    onDownloadProgress: (callback: (progress: any) => void) => () => void;
+    onUpdateDownloaded: (callback: (info: any) => void) => () => void;
+    onUpdateError: (callback: (error: string) => void) => () => void;
+  };
+
   profile: {
     get: () => Promise<DbResult<any>>;
     save: (data: any) => Promise<DbResult<any>>;

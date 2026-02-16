@@ -20,6 +20,57 @@ export function Settings() {
   const [isRestoring, setIsRestoring] = useState(false);
   const [backupMessage, setBackupMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
+  // Update state
+  const [updateStatus, setUpdateStatus] = useState<'idle' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error'>('idle');
+  const [updateInfo, setUpdateInfo] = useState<any>(null);
+  const [downloadProgress, setDownloadProgress] = useState(0);
+  const [errorMessage, setErrorMessage] = useState('');
+
+  useEffect(() => {
+    // Listen for update events
+    const removeAvailable = window.electronAPI.updater.onUpdateAvailable((info) => {
+      setUpdateStatus('available');
+      setUpdateInfo(info);
+    });
+
+    const removeNotAvailable = window.electronAPI.updater.onUpdateNotAvailable(() => {
+      setUpdateStatus('not-available');
+    });
+
+    const removeProgress = window.electronAPI.updater.onDownloadProgress((progress) => {
+      setUpdateStatus('downloading');
+      setDownloadProgress(progress.percent);
+    });
+
+    const removeDownloaded = window.electronAPI.updater.onUpdateDownloaded((info) => {
+      setUpdateStatus('downloaded');
+      setUpdateInfo(info);
+    });
+
+    const removeError = window.electronAPI.updater.onUpdateError((error) => {
+      setUpdateStatus('error');
+      setErrorMessage(error);
+    });
+
+    return () => {
+      removeAvailable();
+      removeNotAvailable();
+      removeProgress();
+      removeDownloaded();
+      removeError();
+    };
+  }, []);
+
+  const handleCheckForUpdates = async () => {
+    setUpdateStatus('checking');
+    try {
+      await window.electronAPI.updater.checkForUpdates();
+    } catch (error: any) {
+      setUpdateStatus('error');
+      setErrorMessage(error.message || 'Failed to check for updates');
+    }
+  };
+
   useEffect(() => {
     const fetchAppInfo = async () => {
       try {
@@ -148,8 +199,8 @@ export function Settings() {
             <CardContent className="space-y-6">
               {backupMessage && (
                 <div className={`p-3 rounded-md text-sm ${backupMessage.type === 'success'
-                    ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
-                    : 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
+                  ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
+                  : 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
                   }`}>
                   {backupMessage.text}
                 </div>
@@ -275,6 +326,65 @@ export function Settings() {
                   </div>
                 </div>
               )}
+
+              <div className="pt-6 border-t space-y-4">
+                <h3 className="text-sm font-medium">Software Update</h3>
+                <div className="flex items-center justify-between p-4 border rounded-lg bg-muted/30">
+                  <div className="space-y-1">
+                    <p className="text-sm font-medium">
+                      {updateStatus === 'idle' && 'Check for latest version'}
+                      {updateStatus === 'checking' && 'Checking for updates...'}
+                      {updateStatus === 'available' && `New version ${updateInfo?.version} is available!`}
+                      {updateStatus === 'downloading' && `Downloading update... ${downloadProgress}%`}
+                      {updateStatus === 'downloaded' && 'Update ready to install!'}
+                      {updateStatus === 'not-available' && 'You are up to date!'}
+                      {updateStatus === 'error' && 'Error checking for updates'}
+                    </p>
+                    {updateStatus === 'error' && errorMessage && (
+                      <p className="text-xs text-destructive">{errorMessage}</p>
+                    )}
+                  </div>
+
+                  <div className="flex gap-2">
+                    {updateStatus === 'idle' || updateStatus === 'not-available' || updateStatus === 'error' ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={handleCheckForUpdates}
+                        disabled={updateStatus === 'checking'}
+                      >
+                        {updateStatus === 'checking' ? (
+                          <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Checking...</>
+                        ) : (
+                          'Check for Updates'
+                        )}
+                      </Button>
+                    ) : null}
+
+                    {updateStatus === 'available' && (
+                      <Button size="sm" onClick={() => window.electronAPI.updater.downloadUpdate()}>
+                        Download Now
+                      </Button>
+                    )}
+
+                    {updateStatus === 'downloaded' && (
+                      <Button size="sm" onClick={() => window.electronAPI.updater.installUpdate()}>
+                        Restart to Install
+                      </Button>
+                    )}
+                  </div>
+                </div>
+
+                {updateStatus === 'downloading' && (
+                  <div className="w-full bg-muted rounded-full h-2 overflow-hidden">
+                    <div
+                      className="bg-primary h-full transition-all duration-300"
+                      style={{ width: `${downloadProgress}%` }}
+                    />
+                  </div>
+                )}
+              </div>
+
               <div className="pt-4 border-t">
                 <p className="text-sm text-muted-foreground">
                   © 2025 Sambad. All rights reserved.

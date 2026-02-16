@@ -12,6 +12,7 @@ export class AutoUpdater {
   private updateCheckInProgress = false;
 
   constructor() {
+    logManager.info('system', 'AutoUpdater initialized');
     this.setupAutoUpdater();
   }
 
