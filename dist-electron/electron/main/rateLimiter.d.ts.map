@@ -1,0 +1,1 @@
+{"version":3,"file":"rateLimiter.d.ts","sourceRoot":"","sources":["../../../electron/main/rateLimiter.ts"],"names":[],"mappings":"AAOA,cAAM,WAAW;IACb,OAAO,CAAC,QAAQ,CAAyC;IACzD,OAAO,CAAC,QAAQ,CAAC,SAAS,CAAS;IACnC,OAAO,CAAC,QAAQ,CAAC,YAAY,CAAO;IAEpC,aAAa,CAAC,GAAG,EAAE,MAAM,GAAG,OAAO;CAoBtC;AAED,eAAO,MAAM,WAAW,aAAoB,CAAC"}
