@@ -1,17 +1,14 @@
-import { BrowserWindow } from 'electron';
+// Robust Electron import for CommonJS
+const { BrowserWindow } = require('electron');
 import * as path from 'path';
-import { fileURLToPath } from 'url';
 import { logManager } from './logManager';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-let consoleWindow: BrowserWindow | null = null;
+let consoleWindow: any | null = null;
 
 const isDev = process.env.NODE_ENV === 'development';
 const VITE_DEV_SERVER_URL = 'http://localhost:5173';
 
-export function createConsoleWindow(): BrowserWindow {
+export function createConsoleWindow(): any {
   if (consoleWindow && !consoleWindow.isDestroyed()) {
     consoleWindow.focus();
     return consoleWindow;
@@ -56,7 +53,7 @@ export function createConsoleWindow(): BrowserWindow {
   return consoleWindow;
 }
 
-export function getConsoleWindow(): BrowserWindow | null {
+export function getConsoleWindow(): any | null {
   return consoleWindow;
 }
 

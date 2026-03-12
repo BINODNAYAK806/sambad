@@ -1,35 +1,50 @@
-import updater from 'electron-updater';
-import { BrowserWindow, dialog } from 'electron';
-import log from 'electron-log';
-import { logManager } from './logManager.js';
 
-const { autoUpdater } = updater;
-autoUpdater.logger = log;
-(autoUpdater.logger as typeof log).transports.file.level = 'info';
+// Robust Electron import for CommonJS
+const { app, BrowserWindow, dialog } = require('electron');
+const log = require('electron-log');
+import { logManager } from './logManager';
+
 
 export class AutoUpdater {
-  private mainWindow: BrowserWindow | null = null;
+  private mainWindow: any | null = null;
   private updateCheckInProgress = false;
+  private _autoUpdater: any = null;
 
   constructor() {
     logManager.info('system', 'AutoUpdater initialized');
-    this.setupAutoUpdater();
   }
 
-  setMainWindow(window: BrowserWindow): void {
+  private get autoUpdater(): any {
+    if (!this._autoUpdater) {
+      const { autoUpdater } = require('electron-updater');
+      this._autoUpdater = autoUpdater;
+      this.setupAutoUpdater();
+    }
+    return this._autoUpdater;
+  }
+
+  setMainWindow(window: any): void {
     this.mainWindow = window;
   }
 
   private setupAutoUpdater(): void {
-    autoUpdater.autoDownload = false;
-    autoUpdater.autoInstallOnAppQuit = true;
+    const updater = this._autoUpdater;
+    if (!updater) return;
 
-    autoUpdater.on('checking-for-update', () => {
+    // Configure logger here to ensure app is ready if needed, 
+    // though electron-updater usually handles this if called late enough.
+    updater.logger = log;
+    (updater.logger as any).transports.file.level = 'info';
+
+    updater.autoDownload = false;
+    updater.autoInstallOnAppQuit = true;
+
+    updater.on('checking-for-update', () => {
       logManager.info('system', 'Checking for updates...');
       this.updateCheckInProgress = true;
     });
 
-    autoUpdater.on('update-available', (info) => {
+    updater.on('update-available', (info: any) => {
       logManager.info('system', 'Update available', {
         version: info.version,
         releaseDate: info.releaseDate,
@@ -50,10 +65,10 @@ export class AutoUpdater {
             defaultId: 0,
             cancelId: 1,
           })
-          .then((result) => {
+          .then((result: any) => {
             if (result.response === 0) {
               logManager.info('system', 'User chose to download update');
-              autoUpdater.downloadUpdate();
+              updater.downloadUpdate();
             } else {
               logManager.info('system', 'User postponed update');
             }
@@ -61,7 +76,7 @@ export class AutoUpdater {
       }
     });
 
-    autoUpdater.on('update-not-available', (info) => {
+    updater.on('update-not-available', (info: any) => {
       logManager.info('system', 'Update not available', { version: info.version });
       this.updateCheckInProgress = false;
 
@@ -71,7 +86,7 @@ export class AutoUpdater {
       }
     });
 
-    autoUpdater.on('error', (error) => {
+    updater.on('error', (error: any) => {
       logManager.error('system', 'Update error', error);
       this.updateCheckInProgress = false;
 
@@ -89,7 +104,7 @@ export class AutoUpdater {
       }
     });
 
-    autoUpdater.on('download-progress', (progress) => {
+    updater.on('download-progress', (progress: any) => {
       const progressPercent = Math.round(progress.percent);
       logManager.debug('system', `Download progress: ${progressPercent}%`, {
         transferred: progress.transferred,
@@ -107,7 +122,7 @@ export class AutoUpdater {
       }
     });
 
-    autoUpdater.on('update-downloaded', (info) => {
+    updater.on('update-downloaded', (info: any) => {
       logManager.info('system', 'Update downloaded', { version: info.version });
 
       if (this.mainWindow && !this.mainWindow.isDestroyed()) {
@@ -125,10 +140,10 @@ export class AutoUpdater {
             defaultId: 0,
             cancelId: 1,
           })
-          .then((result) => {
+          .then((result: any) => {
             if (result.response === 0) {
               logManager.info('system', 'Installing update and restarting...');
-              autoUpdater.quitAndInstall(false, true);
+              updater.quitAndInstall(false, true);
             } else {
               logManager.info('system', 'Update will be installed on next restart');
             }
@@ -140,7 +155,7 @@ export class AutoUpdater {
   checkForUpdates(): void {
     if (!this.updateCheckInProgress) {
       logManager.info('system', 'Manual update check triggered');
-      autoUpdater.checkForUpdates().catch((error) => {
+      this.autoUpdater.checkForUpdates().catch((error: any) => {
         logManager.error('system', 'Failed to check for updates', error);
       });
     } else {
@@ -151,7 +166,7 @@ export class AutoUpdater {
   checkForUpdatesAndNotify(): void {
     if (!this.updateCheckInProgress) {
       logManager.info('system', 'Automatic update check triggered');
-      autoUpdater.checkForUpdatesAndNotify().catch((error) => {
+      this.autoUpdater.checkForUpdatesAndNotify().catch((error: any) => {
         logManager.error('system', 'Failed to check for updates', error);
       });
     }
@@ -159,8 +174,8 @@ export class AutoUpdater {
 
   quitAndInstall(): void {
     logManager.info('system', 'Quitting and installing update');
-    autoUpdater.quitAndInstall(false, true);
+    this.autoUpdater.quitAndInstall(false, true);
   }
 }
 
-export const appUpdater = new AutoUpdater();
+

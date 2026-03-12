@@ -126,7 +126,7 @@ export async function testConnection(retries = 3): Promise<boolean> {
 }
 
 export async function getTenantContext() {
-  const { authService } = await import('./auth.js');
+  const { authService } = await import('./auth');
   const client = getSupabase();
   const companyId = await authService.getCurrentCompanyId();
   if (!companyId) throw new Error('No company context. Please login.');

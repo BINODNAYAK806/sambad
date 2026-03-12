@@ -1,5 +1,4 @@
-import nodeMachineId from 'node-machine-id';
-const { machineIdSync } = nodeMachineId;
+import { machineIdSync } from 'node-machine-id';
 import { createHash } from 'crypto';
 
 /**

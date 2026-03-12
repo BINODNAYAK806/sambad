@@ -1,4 +1,5 @@
-import { BrowserWindow } from 'electron';
+
+const { BrowserWindow } = require('electron');
 
 export interface LogEntry {
   id: string;
@@ -12,9 +13,9 @@ export interface LogEntry {
 class LogManager {
   private logs: LogEntry[] = [];
   private maxLogs = 1000;
-  private consoleWindow: BrowserWindow | null = null;
+  private consoleWindow: any | null = null;
 
-  setConsoleWindow(window: BrowserWindow | null): void {
+  setConsoleWindow(window: any | null): void {
     this.consoleWindow = window;
   }
 

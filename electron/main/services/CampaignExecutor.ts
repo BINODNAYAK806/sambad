@@ -5,7 +5,7 @@
  * Handles message execution, error recovery, and progress tracking.
  */
 
-import { WhatsAppClientSingleton } from '../whatsapp/WhatsAppClient.js';
+import { WhatsAppClientSingleton } from '../whatsapp/WhatsAppClient';
 import type {
     CampaignTask,
     ExecutionResult,
@@ -13,12 +13,12 @@ import type {
     ExecutionError,
     SendingStrategy,
     CampaignMessage
-} from '../types/campaign.js';
-import { ServerRotationManager } from './ServerRotationManager.js';
-import { ServerHealthMonitor } from './ServerHealthMonitor.js';
+} from '../types/campaign';
+import { ServerRotationManager } from './ServerRotationManager';
+import { ServerHealthMonitor } from './ServerHealthMonitor';
 import type { BrowserWindow } from 'electron';
 import * as path from 'path';
-import { createPollResult, createCampaignMessage } from '../db/index.js';
+import { createPollResult, createCampaignMessage } from '../db/index';
 
 export class CampaignExecutor {
     private rotationManager: ServerRotationManager;

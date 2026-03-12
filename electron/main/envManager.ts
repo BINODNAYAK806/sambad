@@ -1,4 +1,6 @@
-import { app, safeStorage } from 'electron';
+
+// Robust Electron import for CommonJS
+const { app, safeStorage } = require('electron');
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -8,21 +10,32 @@ export interface SupabaseCredentials {
 }
 
 class EnvironmentManager {
-  private credentialsPath: string;
-  private legacyEnvPath: string;
+  private _credentialsPath: string | null = null;
+  private _legacyEnvPath: string | null = null;
   private credentials: SupabaseCredentials | null = null;
   private encryptionAvailable: boolean = false;
 
   constructor() {
-    this.credentialsPath = path.join(app.getPath('userData'), '.sambad-credentials');
-    this.legacyEnvPath = path.join(app.getPath('userData'), '.env');
-
     app.whenReady().then(() => {
       this.encryptionAvailable = safeStorage.isEncryptionAvailable();
       console.log('[EnvManager] Encryption available:', this.encryptionAvailable);
       this.loadCredentials();
       this.migrateLegacyCredentials();
     });
+  }
+
+  private get credentialsPath(): string {
+    if (!this._credentialsPath) {
+      this._credentialsPath = path.join(app.getPath('userData'), '.sambad-credentials');
+    }
+    return this._credentialsPath;
+  }
+
+  private get legacyEnvPath(): string {
+    if (!this._legacyEnvPath) {
+      this._legacyEnvPath = path.join(app.getPath('userData'), '.env');
+    }
+    return this._legacyEnvPath;
   }
 
   private migrateLegacyCredentials(): void {

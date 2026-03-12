@@ -1,4 +1,5 @@
-import { app } from 'electron';
+
+const { app } = require('electron');
 import * as fs from 'fs';
 import * as path from 'path';
 

@@ -5,8 +5,8 @@
  * Provides real-time status checking and server filtering.
  */
 
-import { WhatsAppClientSingleton } from '../whatsapp/WhatsAppClient.js';
-import type { HealthStatus } from '../types/campaign.js';
+import { WhatsAppClientSingleton } from '../whatsapp/WhatsAppClient';
+import type { HealthStatus } from '../types/campaign';
 
 export class ServerHealthMonitor {
     private healthCache: Map<number, HealthStatus> = new Map();

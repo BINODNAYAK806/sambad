@@ -1,4 +1,4 @@
-import { getSupabase } from './supabase.js';
+import { getSupabase } from './supabase';
 
 export type PermissionAction = 'read' | 'create' | 'update' | 'delete';
 export type ModuleName = 'contacts' | 'campaigns' | 'groups' | 'reports' | 'settings' | 'logs';

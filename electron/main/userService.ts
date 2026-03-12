@@ -1,4 +1,4 @@
-import * as db from './db/index.js';
+import * as db from './db/index';
 import crypto from 'crypto';
 
 export type UserRole = 'SUPER_ADMIN' | 'ADMIN' | 'STAFF';

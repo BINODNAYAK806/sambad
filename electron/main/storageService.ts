@@ -19,11 +19,12 @@
  */
 
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { ErrorLogger } from './errorLogger.js';
-import { app } from 'electron';
+import { ErrorLogger } from './errorLogger';
+// Robust Electron import for CommonJS
+const { app } = require('electron');
 import * as fs from 'fs';
 import * as path from 'path';
-import * as db from './db/index.js';
+import * as db from './db/index';
 
 export type StorageMode = 'cloud' | 'local' | 'hybrid';
 

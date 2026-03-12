@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
-import { app } from 'electron';
+// Robust Electron import for CommonJS
+const { app } = require('electron');
 import * as path from 'path';
 import * as fs from 'fs';
 
@@ -1440,7 +1441,7 @@ export function getPollSummary(campaignId: number): { success: boolean; data?: a
     return {
       success: true,
       data: {
-        ...summary,
+        ...(summary as any || {}),
         voteBreakdown
       }
     };

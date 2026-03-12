@@ -1,6 +1,7 @@
 import path from 'path';
 import fs from 'fs';
-import { app } from 'electron';
+// Robust Electron import for CommonJS
+const { app } = require('electron');
 
 export enum LogLevel {
     INFO = 'INFO',
@@ -10,19 +11,29 @@ export enum LogLevel {
 }
 
 class Logger {
-    private logPath: string;
+    private _logPath: string | null = null;
 
     constructor() {
-        // Write logs to user data directory
-        const logsDir = path.join(app.getPath('userData'), 'logs');
-        if (!fs.existsSync(logsDir)) {
-            try {
+        // Initialization moved to getLogPath() for lazy loading
+    }
+
+    private getLogPath(): string {
+        if (this._logPath) return this._logPath;
+
+        try {
+            const userDataPath = app.getPath('userData');
+            const logsDir = path.join(userDataPath, 'logs');
+            
+            if (!fs.existsSync(logsDir)) {
                 fs.mkdirSync(logsDir, { recursive: true });
-            } catch (err) {
-                // Fallback or ignore if fails during construction
             }
+            
+            this._logPath = path.join(logsDir, 'main.log');
+            return this._logPath;
+        } catch (err) {
+            // Backup fallback if app is not ready
+            return path.join(process.cwd(), 'main.log');
         }
-        this.logPath = path.join(logsDir, 'main.log');
     }
 
     private formatMessage(level: LogLevel, message: string, meta?: any): string {
@@ -43,7 +54,7 @@ class Logger {
 
         // Persist to file
         try {
-            fs.appendFileSync(this.logPath, logLine);
+            fs.appendFileSync(this.getLogPath(), logLine);
         } catch (err) {
             // Failed to write to log file
         }
@@ -62,8 +73,15 @@ class Logger {
     }
 
     debug(message: string, meta?: any) {
-        if (!app.isPackaged) {
-            this.write(LogLevel.DEBUG, message, meta);
+        try {
+            if (app && !app.isPackaged) {
+                this.write(LogLevel.DEBUG, message, meta);
+            }
+        } catch (err) {
+            // If app is not ready, we can still log debug to console in dev
+            if (process.env.NODE_ENV === 'development') {
+                this.write(LogLevel.DEBUG, message, meta);
+            }
         }
     }
 }

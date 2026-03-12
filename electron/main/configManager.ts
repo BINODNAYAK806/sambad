@@ -1,4 +1,5 @@
-import { app } from 'electron';
+
+const { app } = require('electron');
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -12,8 +13,13 @@ export interface SupabaseConfig {
 const CONFIG_FILE_NAME = 'sambad-supabase.json';
 
 function getConfigPath(): string {
-  const userDataPath = app.getPath('userData');
-  return path.join(userDataPath, CONFIG_FILE_NAME);
+  try {
+    const userDataPath = app.getPath('userData');
+    return path.join(userDataPath, CONFIG_FILE_NAME);
+  } catch (e) {
+    // Fallback if app is not ready
+    return path.join(process.cwd(), CONFIG_FILE_NAME);
+  }
 }
 
 function simpleEncrypt(text: string): string {

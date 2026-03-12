@@ -1,7 +1,6 @@
 import { SupabaseClient, createClient } from '@supabase/supabase-js';
-import { getSupabase, currentSupabaseUrl, currentSupabaseKey } from './supabase.js';
-import machineId from 'node-machine-id';
-const { machineIdSync } = machineId;
+import { getSupabase, currentSupabaseUrl, currentSupabaseKey } from './supabase';
+import { machineIdSync } from 'node-machine-id';
 
 export interface RegistrationData {
     company_name: string;

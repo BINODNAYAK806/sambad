@@ -1,4 +1,5 @@
-import { app, safeStorage } from 'electron';
+
+const { app, safeStorage } = require('electron');
 import * as fs from 'fs';
 import * as path from 'path';
 

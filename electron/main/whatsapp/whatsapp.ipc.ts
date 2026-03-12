@@ -4,14 +4,15 @@
  * Registers IPC handlers for renderer communication.
  */
 
-import { ipcMain, BrowserWindow, app } from 'electron';
+// Robust Electron import for CommonJS
+const { ipcMain, BrowserWindow, app } = require('electron');
 import * as fs from 'fs';
 import * as path from 'path';
-import { whatsAppClient } from './WhatsAppClient.js';
-import { getPollVotes, getPollSummary, getPollServerStats } from '../db/index.js';
+import { whatsAppClient } from './WhatsAppClient';
+import { getPollVotes, getPollSummary, getPollServerStats } from '../db/index';
 import * as XLSX from 'xlsx';
 
-export function registerWhatsAppHandlers(mainWindow: BrowserWindow | null): void {
+export function registerWhatsAppHandlers(mainWindow: any | null): void {
     console.log('[WhatsApp IPC] ========== REGISTERING HANDLERS ==========');
 
     // Set main window reference
@@ -242,7 +243,7 @@ export function registerWhatsAppHandlers(mainWindow: BrowserWindow | null): void
     ipcMain.handle('whatsapp:import-contacts', async (_event, serverId: number, contacts: any[]) => {
         try {
             console.log(`[WhatsApp IPC] [Server ${serverId}] Import contacts requested: ${contacts.length} contacts`);
-            const { storageService } = await import('../storageService.js');
+            const { storageService } = await import('../storageService');
 
             let successCount = 0;
             let failureCount = 0;
@@ -285,7 +286,7 @@ export function registerWhatsAppHandlers(mainWindow: BrowserWindow | null): void
     ipcMain.handle('whatsapp:import-group', async (_event, serverId: number, group: any) => {
         try {
             console.log(`[WhatsApp IPC] [Server ${serverId}] Import group requested: ${group.subject}`);
-            const { storageService } = await import('../storageService.js');
+            const { storageService } = await import('../storageService');
 
             // 1. Fetch detailed participants
             const participants = await whatsAppClient.getGroupParticipantsDetailed(serverId, group.id);
@@ -313,7 +314,7 @@ export function registerWhatsAppHandlers(mainWindow: BrowserWindow | null): void
             let successCount = 0;
             let failureCount = 0;
 
-            const { getDatabase, groups: dbGroups } = await import('../db/index.js');
+            const { getDatabase, groups: dbGroups } = await import('../db/index');
             getDatabase();
 
             for (const p of participants) {
@@ -369,6 +370,6 @@ export function registerWhatsAppHandlers(mainWindow: BrowserWindow | null): void
     console.log('[WhatsApp IPC] All handlers registered');
 }
 
-export function updateWhatsAppMainWindow(mainWindow: BrowserWindow): void {
+export function updateWhatsAppMainWindow(mainWindow: any): void {
     whatsAppClient.setMainWindow(mainWindow);
 }

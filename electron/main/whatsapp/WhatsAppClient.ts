@@ -5,16 +5,14 @@
  * More stable than Puppeteer-based solutions, actively maintained
  */
 
-import { BrowserWindow, app } from 'electron';
+// Robust Electron import for CommonJS
+const electron = require('electron');
+const { BrowserWindow, app } = electron;
 import * as path from 'path';
-import makeWASocket, {
-    DisconnectReason,
-    useMultiFileAuthState,
-    WASocket,
-    Browsers,
-    fetchLatestBaileysVersion,
+import type { 
+    WASocket, 
 } from '@whiskeysockets/baileys';
-import { Boom } from '@hapi/boom';
+import type { Boom } from '@hapi/boom';
 import pino from 'pino';
 import * as fs from 'fs';
 import * as mime from 'mime-types';
@@ -33,20 +31,21 @@ export interface WhatsAppStatus {
 export class WhatsAppClientSingleton {
     private static instance: WhatsAppClientSingleton;
     private socks: Record<number, WASocket | null> = {};
-    private mainWindow: BrowserWindow | null = null;
+    private mainWindow: any | null = null;
     private states: Record<number, WhatsAppState> = {};
     private lastErrors: Record<number, string | null> = {};
-    private userDataPath: string;
+    private _userDataPath: string | null = null;
     private phoneNumbers: Record<number, string | null> = {};
     private authStates: Record<number, any> = {};
     private saveCredsMap: Record<number, any> = {};
+    private baileys: any = null;
+    private boom: any = null;
 
     // Manual Store for contacts and chats (Per server)
     private contactsMap: Record<number, Record<string, any>> = {};
     private isDirtyMap: Record<number, boolean> = {};
 
     private constructor() {
-        this.userDataPath = app.getPath('userData');
         console.log('[WhatsApp] Baileys multi-session client singleton created');
 
         // Initialize maps for 5 servers
@@ -56,7 +55,6 @@ export class WhatsAppClientSingleton {
             this.phoneNumbers[i] = null;
             this.contactsMap[i] = {};
             this.isDirtyMap[i] = false;
-            this.loadStore(i);
         }
 
         // Save stores every 10s if dirty
@@ -67,6 +65,18 @@ export class WhatsAppClientSingleton {
                 }
             }
         }, 10_000);
+    }
+
+    private get userDataPath(): string {
+        if (!this._userDataPath) {
+            this._userDataPath = app.getPath('userData');
+            
+            // Lazy store initialization when userDataPath is first accessed
+            for (let i = 1; i <= 5; i++) {
+                this.loadStore(i);
+            }
+        }
+        return this._userDataPath;
     }
 
     private getStoreFile(serverId: number): string {
@@ -107,7 +117,7 @@ export class WhatsAppClientSingleton {
         return WhatsAppClientSingleton.instance;
     }
 
-    setMainWindow(window: BrowserWindow): void {
+    setMainWindow(window: any): void {
         this.mainWindow = window;
         console.log('[WhatsApp] MainWindow set');
     }
@@ -151,6 +161,23 @@ export class WhatsAppClientSingleton {
         this.sendToRenderer('whatsapp:log', { serverId, message: fullMessage });
     }
 
+    private async getBaileys() {
+        if (!this.baileys) {
+            // Using eval to prevent TypeScript from transpiling import() to require() in CommonJS mode
+            this.baileys = await (eval('import("@whiskeysockets/baileys")'));
+        }
+        return this.baileys;
+    }
+
+    private async getBoom() {
+        if (!this.boom) {
+            // Using eval to prevent TypeScript from transpiling import() to require() in CommonJS mode
+            const { Boom } = await (eval('import("@hapi/boom")'));
+            this.boom = Boom;
+        }
+        return this.boom;
+    }
+
     async initialize(serverId: number = 1): Promise<void> {
         if (this.states[serverId] === 'initializing' || this.states[serverId] === 'ready') {
             this.log(serverId, 'Already initializing or ready, skipping');
@@ -165,6 +192,13 @@ export class WhatsAppClientSingleton {
         this.sendToRenderer('whatsapp:status', { serverId, status: this.getStatus(serverId) });
 
         try {
+            const { 
+                useMultiFileAuthState, 
+                fetchLatestBaileysVersion, 
+                makeWASocket, 
+                Browsers 
+            } = await this.getBaileys();
+
             const authDir = path.join(this.userDataPath, `.baileys_auth_server_${serverId}`);
             this.log(serverId, `Auth directory: ${authDir}`);
 
@@ -456,7 +490,9 @@ export class WhatsAppClientSingleton {
 
             // Disconnected
             if (connection === 'close') {
-                const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
+                const Boom = await this.getBoom();
+                const { DisconnectReason } = await this.getBaileys();
+                const statusCode = (lastDisconnect?.error as any)?.output?.statusCode;
                 const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
 
                 this.log(serverId, `Connection closed. StatusCode: ${statusCode}, Reconnect: ${shouldReconnect}`);

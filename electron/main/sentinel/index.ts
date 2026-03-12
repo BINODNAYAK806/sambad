@@ -1,14 +1,14 @@
-import { BrowserWindow, ipcMain, app } from 'electron';
+// Robust Electron import for CommonJS
+const { BrowserWindow, ipcMain, app } = require('electron');
+import type { BrowserWindow as BrowserWindowType } from 'electron';
 import * as path from 'path';
-import { fileURLToPath } from 'url';
-import { getDeviceFingerprint } from './hardware.js';
-import { getLicense, saveLicense } from './store.js';
-import { validateLicense, registerDevice } from './api.js';
+import { getDeviceFingerprint } from './hardware';
+import { getLicense, saveLicense } from './store';
+import { validateLicense, registerDevice } from './api';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// In CJS, __dirname and __filename are globally available
 
-let sentinelWindow: BrowserWindow | null = null;
+let sentinelWindow: any | null = null;
 let onSuccessCallback: (() => void) | null = null;
 
 // internal state to prevent main window launch loop if sentinel fails
@@ -38,10 +38,17 @@ export async function initSentinel(onSuccess: () => void) {
                 return;
             } else {
                 console.warn('[Sentinel] Validation failed:', result.reason);
-                // If expired or mismatch, clear local storage and show UI
-                if (result.reason === 'device_mismatch' || result.reason === 'expired' || result.reason === 'suspended') {
-                    // clearLicense(); // Optional: keep it to pre-fill? Better to force re-entry.
+
+                // If it's a network/connectivity error, allow the app to launch with cached license.
+                // Only block on definitive server-side rejections.
+                if (result.reason === 'network_error') {
+                    console.warn('[Sentinel] Network error during validation. Allowing launch with cached license.');
+                    isValidationInProgress = false;
+                    onSuccess();
+                    return;
                 }
+
+                // Block on real violations: expired, suspended, device_mismatch
                 showSentinelWindow(result.reason);
             }
         } else {
@@ -50,13 +57,24 @@ export async function initSentinel(onSuccess: () => void) {
         }
     } catch (error) {
         console.error('[Sentinel] Initialization Error:', error);
+        // If there's an unexpected error but we have a local license, allow launch
+        const storedLicense = getLicense();
+        if (storedLicense) {
+            console.warn('[Sentinel] Unexpected error but local license exists. Allowing launch.');
+            isValidationInProgress = false;
+            onSuccess();
+            return;
+        }
         showSentinelWindow('error');
     }
 }
 
 
 
-const isDev = !app.isPackaged && process.env.NODE_ENV !== 'production';
+// Defer isDev check
+function getIsDev() {
+  return !app.isPackaged && process.env.NODE_ENV !== 'production';
+}
 const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173';
 
 function showSentinelWindow(reason?: string) {
@@ -88,7 +106,7 @@ function showSentinelWindow(reason?: string) {
     });
 
     // Don't open DevTools in production
-    if (isDev) {
+    if (getIsDev()) {
         sentinelWindow.webContents.openDevTools({ mode: 'detach' });
     }
 
@@ -96,7 +114,7 @@ function showSentinelWindow(reason?: string) {
         sentinelWindow?.show();
     });
 
-    if (isDev) {
+    if (getIsDev()) {
         sentinelWindow.loadURL(`${VITE_DEV_SERVER_URL}#/sentinel?reason=${reason || ''}`);
     } else {
         // In production, use the hash option correctly with loadFile

@@ -1,31 +1,33 @@
-import { ipcMain, app, dialog, BrowserWindow } from 'electron';
-import { logger } from './logger.js';
+// Robust Electron import for CommonJS
+const { ipcMain, app, dialog, BrowserWindow } = require('electron');
+import type { BrowserWindow as BrowserWindowType } from 'electron';
+import { logger } from './logger';
 import path from 'path';
 import fs from 'fs';
 import {
   initializeSupabase,
   testConnection
-} from './supabase.js';
-import { storageService } from './storageService.js';
-import { authService, RegistrationData } from './auth.js';
-import { permissionService, ModuleName, PermissionAction } from './permissions.js';
-import { subscriptionService } from './subscriptions.js';
+} from './supabase';
+import { storageService } from './storageService';
+import { authService, RegistrationData } from './auth';
+import { permissionService, ModuleName, PermissionAction } from './permissions';
+import { subscriptionService } from './subscriptions';
 // WhatsApp handlers moved to ./whatsapp/whatsapp.ipc.ts
-import { userService } from './userService.js';
+import { userService } from './userService';
 import {
   loadSupabaseConfig,
   saveSupabaseConfig,
   clearSupabaseConfig,
   validateSupabaseCredentials,
   getSupabaseStatus
-} from './configManager.js';
-import { rateLimiter } from './rateLimiter.js';
+} from './configManager';
+import { rateLimiter } from './rateLimiter';
 import { z } from 'zod';
-import { profileService } from './profileService.js';
-import { logManager } from './logManager.js';
-import { appUpdater } from './autoUpdater.js';
-import * as supportService from './supportService.js';
-import * as db from './db/index.js';
+import { profileService } from './profileService';
+import { logManager } from './logManager';
+import { AutoUpdater } from './autoUpdater';
+import * as supportService from './supportService';
+import * as db from './db/index';
 
 
 
@@ -73,7 +75,7 @@ import {
   stopCurrentCampaign,
   pauseCurrentCampaign,
   resumeCurrentCampaign
-} from './campaignExecutionService.js';
+} from './campaignExecutionService';
 // Campaign execution state
 let isCampaignRunning = false;
 
@@ -94,7 +96,7 @@ export function updateIpcMainWindow(_mainWindow: Electron.BrowserWindow) {
 
 // Unified Campaign Start Logic
 async function startCampaignInternal(campaign: any) {
-  const { whatsAppClient } = await import('./whatsapp/index.js');
+  const { whatsAppClient } = await import('./whatsapp/index');
   const win = (global as any).mainWindow as Electron.BrowserWindow | null;
 
   // Ensure ID is a number, but handle strings gracefully
@@ -159,7 +161,7 @@ async function startCampaignInternal(campaign: any) {
   console.log('[IPC] Campaign execution started in background');
 }
 
-export function registerIpcHandlers(mainWindow: Electron.BrowserWindow | null) {
+export function registerIpcHandlers(mainWindow: Electron.BrowserWindow | null, appUpdater?: AutoUpdater) {
   console.log('[Sambad IPC] Registering IPC handlers');
 
   try {
@@ -393,7 +395,7 @@ export function registerIpcHandlers(mainWindow: Electron.BrowserWindow | null) {
       try {
         // Fallback to SQLite bulk create
         const ids = await storageService.getContacts().then(() => {
-          const db = import('./db/index.js');
+          const db = import('./db/index');
           return db.then(m => m.contacts.bulkCreate(contactsList));
         });
         console.log('[Sambad IPC] Bulk Create Contacts (Local):', ids.length, 'contacts created');
@@ -406,7 +408,7 @@ export function registerIpcHandlers(mainWindow: Electron.BrowserWindow | null) {
 
     ipcMain.handle('contacts:checkExisting', withPermission('contacts', 'read', async (_event, phones: string[]) => {
       try {
-        const db = await import('./db/index.js');
+        const db = await import('./db/index');
         const existing = db.contacts.checkExisting(phones);
         // If staff, mask the numbers (privacy)
         const session = authService.getCurrentSession();
@@ -1010,7 +1012,7 @@ export function registerIpcHandlers(mainWindow: Electron.BrowserWindow | null) {
 
     ipcMain.handle('campaign:status', withPermission('campaigns', 'read', async () => {
       // Return WhatsApp ready status
-      const { whatsAppClient } = await import('./whatsapp/index.js');
+      const { whatsAppClient } = await import('./whatsapp/index');
       const status = whatsAppClient.getStatus();
       console.log('[Sambad IPC] Campaign Status Check - WhatsApp ready:', status.isReady);
       return {
@@ -1600,8 +1602,11 @@ export function registerIpcHandlers(mainWindow: Electron.BrowserWindow | null) {
     ipcMain.handle('updater:check', async () => {
       try {
         console.log('[Sambad IPC] Manual update check requested');
-        appUpdater.checkForUpdates();
-        return { success: true, message: 'Checking for updates...' };
+        if (appUpdater) {
+          appUpdater.checkForUpdates();
+          return { success: true, message: 'Checking for updates...' };
+        }
+        return { success: false, error: 'Auto-updater not initialized' };
       } catch (error: any) {
         console.error('[Sambad IPC] Update check error:', error);
         return { success: false, error: error.message };
@@ -1622,8 +1627,11 @@ export function registerIpcHandlers(mainWindow: Electron.BrowserWindow | null) {
     ipcMain.handle('updater:install', async () => {
       try {
         console.log('[Sambad IPC] Update install requested');
-        appUpdater.quitAndInstall();
-        return { success: true, message: 'Installing update...' };
+        if (appUpdater) {
+          appUpdater.quitAndInstall();
+          return { success: true, message: 'Installing update...' };
+        }
+        return { success: false, error: 'Auto-updater not initialized' };
       } catch (error: any) {
         console.error('[Sambad IPC] Update install error:', error);
         return { success: false, error: error.message };
