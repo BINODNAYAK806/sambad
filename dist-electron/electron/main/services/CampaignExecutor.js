@@ -1,14 +1,50 @@
+"use strict";
 /**
  * CampaignExecutor
  *
  * Orchestrates campaign message sending with rotation strategies.
  * Handles message execution, error recovery, and progress tracking.
  */
-import { ServerRotationManager } from './ServerRotationManager.js';
-import { ServerHealthMonitor } from './ServerHealthMonitor.js';
-import * as path from 'path';
-import { createPollResult, createCampaignMessage } from '../db/index.js';
-export class CampaignExecutor {
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.CampaignExecutor = void 0;
+const ServerRotationManager_1 = require("./ServerRotationManager");
+const ServerHealthMonitor_1 = require("./ServerHealthMonitor");
+const path = __importStar(require("path"));
+const index_1 = require("../db/index");
+class CampaignExecutor {
     whatsAppClient;
     mainWindow;
     rotationManager;
@@ -22,8 +58,8 @@ export class CampaignExecutor {
     constructor(whatsAppClient, mainWindow) {
         this.whatsAppClient = whatsAppClient;
         this.mainWindow = mainWindow;
-        this.rotationManager = new ServerRotationManager();
-        this.healthMonitor = new ServerHealthMonitor(whatsAppClient);
+        this.rotationManager = new ServerRotationManager_1.ServerRotationManager();
+        this.healthMonitor = new ServerHealthMonitor_1.ServerHealthMonitor(whatsAppClient);
     }
     /**
      * Execute a campaign with the specified strategy
@@ -32,7 +68,7 @@ export class CampaignExecutor {
      * @param designatedServerId - Server ID for single strategy
      * @returns Execution result with statistics
      */
-    async execute(campaignTask, strategy, designatedServerId = 1) {
+    async execute(campaignTask, strategy, designatedServerId = 1, runId = null) {
         console.log(`[CampaignExecutor] 🚀 Starting execution - Strategy: ${strategy}, Designated Server: ${designatedServerId}`);
         console.log(`[CampaignExecutor] Total messages: ${campaignTask.messages.length}`);
         // Reset state
@@ -57,7 +93,7 @@ export class CampaignExecutor {
                 const serverId = await this.selectServer(strategy, designatedServerId, i);
                 // Send message
                 const message = campaignTask.messages[i];
-                const result = await this.sendMessage(message, serverId, campaignTask);
+                const result = await this.sendMessage(message, serverId, campaignTask, runId);
                 // Track result
                 if (result.success) {
                     this.sentCount++;
@@ -135,7 +171,9 @@ export class CampaignExecutor {
     /**
      * Send a single message via the specified server
      */
-    async sendMessage(message, serverId, campaignTask) {
+    async sendMessage(message, serverId, campaignTask, runId = null) {
+        const campaignIdNum = parseInt(campaignTask.campaignId.toString());
+        const statusToReport = (success) => success ? 'sent' : 'failed';
         try {
             // Format phone number
             let number = message.recipientNumber?.replace(/\D/g, '') || '';
@@ -158,12 +196,16 @@ export class CampaignExecutor {
                 const pollMessage = await this.whatsAppClient.sendPoll(serverId, chatId, campaignTask.pollQuestion, campaignTask.pollOptions);
                 if (pollMessage && pollMessage.key && pollMessage.key.id) {
                     // Create campaign message record for each recipient
-                    const campaignIdNum = parseInt(campaignTask.campaignId.toString());
                     if (!isNaN(campaignIdNum)) {
-                        createCampaignMessage(campaignIdNum, pollMessage.key.id, message.recipientNumber || '', message.recipientName, campaignTask.pollQuestion, 'sent', serverId);
+                        (0, index_1.createCampaignMessage)(campaignIdNum, pollMessage.key.id, message.recipientNumber || '', message.recipientName, campaignTask.pollQuestion, 'sent', serverId);
+                        // Also add to run history if possible
+                        if (runId) {
+                            const db = await Promise.resolve().then(() => __importStar(require('../db/index')));
+                            db.campaignRuns.addMessage(runId, message.recipientNumber || '', message.recipientName || 'Unknown', 'sent');
+                        }
                         // Create poll result ONCE per campaign (not per message)
                         if (!this.pollResultCreated) {
-                            createPollResult(campaignIdNum, pollMessage.key.id, campaignTask.pollQuestion, campaignTask.pollOptions);
+                            (0, index_1.createPollResult)(campaignIdNum, pollMessage.key.id, campaignTask.pollQuestion, campaignTask.pollOptions);
                             this.pollResultCreated = true;
                             console.log(`[CampaignExecutor] 📊 Created poll result for campaign ${campaignIdNum}`);
                         }
@@ -220,7 +262,17 @@ export class CampaignExecutor {
                 // 4. Send Text Fallback
                 // If no media was sent (or failed) and no poll, send the text/caption itself
                 if (!contentSent) {
-                    await this.whatsAppClient.sendMessage(serverId, chatId, content);
+                    const textMessage = await this.whatsAppClient.sendMessage(serverId, chatId, content);
+                    if (textMessage && textMessage.key && textMessage.key.id) {
+                        // Log standard text message
+                        if (!isNaN(campaignIdNum)) {
+                            (0, index_1.createCampaignMessage)(campaignIdNum, textMessage.key.id, message.recipientNumber || '', message.recipientName, content, 'sent', serverId);
+                            if (runId) {
+                                const db = await Promise.resolve().then(() => __importStar(require('../db/index')));
+                                db.campaignRuns.addMessage(runId, message.recipientNumber || '', message.recipientName || 'Unknown', 'sent');
+                            }
+                        }
+                    }
                 }
             }
             return {
@@ -230,6 +282,15 @@ export class CampaignExecutor {
             };
         }
         catch (error) {
+            // Log failure to database
+            if (!isNaN(campaignIdNum)) {
+                const dummyId = `fail_${Date.now()}_${message.recipientNumber}`;
+                (0, index_1.createCampaignMessage)(campaignIdNum, dummyId, message.recipientNumber || '', message.recipientName, message.templateText || '', 'failed', serverId, error.message || 'Unknown error');
+                if (runId) {
+                    const db = await Promise.resolve().then(() => __importStar(require('../db/index')));
+                    db.campaignRuns.addMessage(runId, message.recipientNumber || '', message.recipientName || 'Unknown', 'failed', error.message || 'Error');
+                }
+            }
             return {
                 success: false,
                 error: error.message || 'Unknown error',
@@ -352,4 +413,5 @@ export class CampaignExecutor {
         return new Promise(resolve => setTimeout(resolve, ms));
     }
 }
+exports.CampaignExecutor = CampaignExecutor;
 //# sourceMappingURL=CampaignExecutor.js.map

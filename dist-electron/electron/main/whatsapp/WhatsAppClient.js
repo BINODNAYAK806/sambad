@@ -1,31 +1,72 @@
+"use strict";
 /**
  * WhatsAppClient - Baileys Integration
  *
  * Uses @whiskeysockets/baileys - a native WhatsApp protocol implementation
  * More stable than Puppeteer-based solutions, actively maintained
  */
-import { app } from 'electron';
-import * as path from 'path';
-import makeWASocket, { DisconnectReason, useMultiFileAuthState, Browsers, fetchLatestBaileysVersion, } from '@whiskeysockets/baileys';
-import pino from 'pino';
-import * as fs from 'fs';
-import * as mime from 'mime-types';
-import * as QRCode from 'qrcode';
-export class WhatsAppClientSingleton {
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.whatsAppClient = exports.WhatsAppClientSingleton = void 0;
+// Robust Electron import for CommonJS
+const electron = require('electron');
+const { BrowserWindow, app } = electron;
+const path = __importStar(require("path"));
+const pino_1 = __importDefault(require("pino"));
+const fs = __importStar(require("fs"));
+const mime = __importStar(require("mime-types"));
+const QRCode = __importStar(require("qrcode"));
+class WhatsAppClientSingleton {
     static instance;
     socks = {};
     mainWindow = null;
     states = {};
     lastErrors = {};
-    userDataPath;
+    _userDataPath = null;
     phoneNumbers = {};
     authStates = {};
     saveCredsMap = {};
+    baileys = null;
+    boom = null;
     // Manual Store for contacts and chats (Per server)
     contactsMap = {};
     isDirtyMap = {};
     constructor() {
-        this.userDataPath = app.getPath('userData');
         console.log('[WhatsApp] Baileys multi-session client singleton created');
         // Initialize maps for 5 servers
         for (let i = 1; i <= 5; i++) {
@@ -34,7 +75,6 @@ export class WhatsAppClientSingleton {
             this.phoneNumbers[i] = null;
             this.contactsMap[i] = {};
             this.isDirtyMap[i] = false;
-            this.loadStore(i);
         }
         // Save stores every 10s if dirty
         setInterval(() => {
@@ -44,6 +84,16 @@ export class WhatsAppClientSingleton {
                 }
             }
         }, 10_000);
+    }
+    get userDataPath() {
+        if (!this._userDataPath) {
+            this._userDataPath = app.getPath('userData');
+            // Lazy store initialization when userDataPath is first accessed
+            for (let i = 1; i <= 5; i++) {
+                this.loadStore(i);
+            }
+        }
+        return this._userDataPath;
     }
     getStoreFile(serverId) {
         return path.join(this.userDataPath, `baileys_store_v3_server_${serverId}.json`);
@@ -117,6 +167,21 @@ export class WhatsAppClientSingleton {
         }
         this.sendToRenderer('whatsapp:log', { serverId, message: fullMessage });
     }
+    async getBaileys() {
+        if (!this.baileys) {
+            // Using eval to prevent TypeScript from transpiling import() to require() in CommonJS mode
+            this.baileys = await (eval('import("@whiskeysockets/baileys")'));
+        }
+        return this.baileys;
+    }
+    async getBoom() {
+        if (!this.boom) {
+            // Using eval to prevent TypeScript from transpiling import() to require() in CommonJS mode
+            const { Boom } = await (eval('import("@hapi/boom")'));
+            this.boom = Boom;
+        }
+        return this.boom;
+    }
     async initialize(serverId = 1) {
         if (this.states[serverId] === 'initializing' || this.states[serverId] === 'ready') {
             this.log(serverId, 'Already initializing or ready, skipping');
@@ -128,6 +193,7 @@ export class WhatsAppClientSingleton {
         // Force send initializing status
         this.sendToRenderer('whatsapp:status', { serverId, status: this.getStatus(serverId) });
         try {
+            const { useMultiFileAuthState, fetchLatestBaileysVersion, makeWASocket, Browsers } = await this.getBaileys();
             const authDir = path.join(this.userDataPath, `.baileys_auth_server_${serverId}`);
             this.log(serverId, `Auth directory: ${authDir}`);
             const { state, saveCreds } = await useMultiFileAuthState(authDir);
@@ -146,7 +212,7 @@ export class WhatsAppClientSingleton {
                     }
                 }
             };
-            const logger = pino({ level: 'debug' }, logStream);
+            const logger = (0, pino_1.default)({ level: 'debug' }, logStream);
             this.log(serverId, 'Fetching latest WhatsApp version...');
             const { version, isLatest } = await fetchLatestBaileysVersion();
             this.log(serverId, `Using version v${version.join('.')}, isLatest: ${isLatest}`);
@@ -392,6 +458,8 @@ export class WhatsAppClientSingleton {
             }
             // Disconnected
             if (connection === 'close') {
+                const Boom = await this.getBoom();
+                const { DisconnectReason } = await this.getBaileys();
                 const statusCode = lastDisconnect?.error?.output?.statusCode;
                 const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
                 this.log(serverId, `Connection closed. StatusCode: ${statusCode}, Reconnect: ${shouldReconnect}`);
@@ -667,5 +735,6 @@ export class WhatsAppClientSingleton {
         }
     }
 }
-export const whatsAppClient = WhatsAppClientSingleton.getInstance();
+exports.WhatsAppClientSingleton = WhatsAppClientSingleton;
+exports.whatsAppClient = WhatsAppClientSingleton.getInstance();
 //# sourceMappingURL=WhatsAppClient.js.map

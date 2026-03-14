@@ -1,64 +1,99 @@
--- ========================================================
--- SAMBAD HYBRID SAAS: SUPABASE SETUP SCRIPT (AGGRESSIVE REFRESH)
--- ========================================================
+-- supabase_schema.sql
+-- Paste this entire file into the Supabase SQL Editor and click RUN.
 
--- 1. Ensure Schema Usage (Mandatory for API visibility)
-GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO postgres, service_role;
-
--- 2. Drop and Recreate Licenses Table (Ensures fresh start)
--- WARNING: This will delete existing license data. 
--- Comment out the DROP line if you want to keep existing data.
-DROP TABLE IF EXISTS licenses; 
-
-CREATE TABLE licenses (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  license_key TEXT UNIQUE NOT NULL,
-  mobile TEXT NOT NULL,
-  device_id TEXT, 
-  status TEXT DEFAULT 'INACTIVE', 
-  expiry_date TIMESTAMPTZ, 
-  activated_at TIMESTAMPTZ,
-  created_at TIMESTAMPTZ DEFAULT NOW()
+-- 1. Contacts
+CREATE TABLE IF NOT EXISTS public.contacts (
+    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+    license_key TEXT NOT NULL,
+    local_id INTEGER NOT NULL,
+    phone TEXT NOT NULL,
+    name TEXT NOT NULL,
+    vars_json JSONB,
+    is_deleted BOOLEAN DEFAULT false,
+    last_updated_at TIMESTAMP WITH TIME ZONE,
+    synced_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(license_key, local_id)
 );
 
--- 3. Create Supporting Tables
-CREATE TABLE IF NOT EXISTS companies (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  name TEXT NOT NULL,
-  slug TEXT UNIQUE NOT NULL,
-  created_at TIMESTAMPTZ DEFAULT NOW()
+-- 2. Groups
+CREATE TABLE IF NOT EXISTS public.groups (
+    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+    license_key TEXT NOT NULL,
+    local_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    is_deleted BOOLEAN DEFAULT false,
+    last_updated_at TIMESTAMP WITH TIME ZONE,
+    synced_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(license_key, local_id)
 );
 
--- 4. Enable Row Level Security (RLS)
-ALTER TABLE licenses ENABLE ROW LEVEL SECURITY;
+-- 3. Group Contacts (Many-to-Many)
+CREATE TABLE IF NOT EXISTS public.group_contacts (
+    license_key TEXT NOT NULL,
+    group_local_id INTEGER NOT NULL,
+    contact_local_id INTEGER NOT NULL,
+    is_deleted BOOLEAN DEFAULT false,
+    last_updated_at TIMESTAMP WITH TIME ZONE,
+    synced_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    PRIMARY KEY(license_key, group_local_id, contact_local_id)
+);
 
--- 5. Grant Permissions (The "PGRST205" Fixer)
-GRANT ALL ON TABLE licenses TO anon;
-GRANT ALL ON TABLE licenses TO authenticated;
-GRANT ALL ON TABLE licenses TO service_role;
-GRANT ALL ON TABLE companies TO anon;
-GRANT ALL ON TABLE companies TO authenticated;
-GRANT ALL ON TABLE companies TO service_role;
+-- 4. Campaigns
+CREATE TABLE IF NOT EXISTS public.campaigns (
+    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+    license_key TEXT NOT NULL,
+    local_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    status TEXT NOT NULL,
+    message_template TEXT,
+    group_local_id INTEGER,
+    sent_count INTEGER DEFAULT 0,
+    failed_count INTEGER DEFAULT 0,
+    total_count INTEGER DEFAULT 0,
+    started_at TIMESTAMP WITH TIME ZONE,
+    completed_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE,
+    sending_strategy TEXT,
+    is_poll BOOLEAN DEFAULT false,
+    is_deleted BOOLEAN DEFAULT false,
+    last_updated_at TIMESTAMP WITH TIME ZONE,
+    synced_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(license_key, local_id)
+);
 
--- 6. Create Access Policies
-DROP POLICY IF EXISTS "Allow anon select" ON licenses;
-CREATE POLICY "Allow anon select" ON licenses FOR SELECT TO anon USING (true);
+-- 5. Campaign Messages
+CREATE TABLE IF NOT EXISTS public.campaign_messages (
+    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+    license_key TEXT NOT NULL,
+    local_message_id TEXT NOT NULL,
+    campaign_local_id INTEGER NOT NULL,
+    contact_local_id INTEGER,
+    recipient_number TEXT NOT NULL,
+    recipient_name TEXT,
+    status TEXT NOT NULL,
+    error_message TEXT,
+    sent_at TIMESTAMP WITH TIME ZONE,
+    is_deleted BOOLEAN DEFAULT false,
+    last_updated_at TIMESTAMP WITH TIME ZONE,
+    synced_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(license_key, local_message_id)
+);
 
-DROP POLICY IF EXISTS "Allow anon insert" ON licenses;
-CREATE POLICY "Allow anon insert" ON licenses FOR INSERT TO anon WITH CHECK (true);
+-- Enable RLS (Row Level Security) - simple pass-through for service role
+ALTER TABLE public.contacts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.groups ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.group_contacts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.campaigns ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.campaign_messages ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS "Allow anon update" ON licenses;
-CREATE POLICY "Allow anon update" ON licenses FOR UPDATE TO anon USING (true);
+CREATE POLICY "Enable all access for service role" ON public.contacts FOR ALL USING (true);
+CREATE POLICY "Enable all access for service role" ON public.groups FOR ALL USING (true);
+CREATE POLICY "Enable all access for service role" ON public.group_contacts FOR ALL USING (true);
+CREATE POLICY "Enable all access for service role" ON public.campaigns FOR ALL USING (true);
+CREATE POLICY "Enable all access for service role" ON public.campaign_messages FOR ALL USING (true);
 
--- 7. FORCE API RELOAD
-NOTIFY pgrst, 'reload schema';
-
--- 8. DIAGNOSTIC CHECK (Run this and check Results tab)
--- Row 1: Should be 'licenses'
--- Row 2: Should be 'companies'
-SELECT table_name 
-FROM information_schema.tables 
-WHERE table_schema = 'public' 
-AND table_name IN ('licenses', 'companies')
-ORDER BY table_name;
+-- Create Indexes for fast querying by license_key
+CREATE INDEX idx_contacts_license ON public.contacts(license_key);
+CREATE INDEX idx_groups_license ON public.groups(license_key);
+CREATE INDEX idx_campaigns_license ON public.campaigns(license_key);
+CREATE INDEX idx_messages_license ON public.campaign_messages(license_key);

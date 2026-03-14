@@ -4,8 +4,8 @@
     "module": "CommonJS",
     "lib": ["ES2022"],
     "moduleResolution": "node",
-    "outDir": "./dist-electron/electron/preload",
-    "rootDir": "./electron/preload",
+    "outDir": "./dist-electron/src-electron/preload",
+    "rootDir": "./src-electron/preload",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
@@ -20,5 +20,5 @@
     "declarationMap": true,
     "sourceMap": true
   },
-  "include": ["electron/preload/**/*"]
+  "include": ["src-electron/preload/**/*"]
 }

@@ -1,71 +1,72 @@
-import { setDefaultResultOrder } from 'node:dns';
-setDefaultResultOrder('ipv4first');
-import { app, BrowserWindow, dialog } from 'electron';
-import * as path from 'path';
-import * as fs from 'fs';
-import { fileURLToPath } from 'url';
-import { config as loadEnv } from 'dotenv';
-import { loadSupabaseConfig } from './configManager.js';
-import { storageService } from './storageService.js';
-import { appUpdater } from './autoUpdater.js';
-import { ErrorLogger } from './errorLogger.js';
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const node_dns_1 = require("node:dns");
+(0, node_dns_1.setDefaultResultOrder)('ipv4first');
+const fs = require('fs');
+const path = require('path');
+const { app, BrowserWindow, dialog } = require('electron');
+console.log('[Sambad] Starting Main Process...');
+console.log('[Sambad] Electron app defined:', !!app);
+const dotenv_1 = require("dotenv");
+const configManager_1 = require("./configManager");
+const storageService_1 = require("./storageService");
+const autoUpdater_1 = require("./autoUpdater");
+const errorLogger_1 = require("./errorLogger");
 // Ensure IPC handlers are registered - CRITICAL
-import './ipc.js';
-import { initSentinel } from './sentinel/index.js';
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+require("./ipc");
+const index_1 = require("./sentinel/index");
+const CloudSyncService_1 = require("./services/CloudSyncService");
+// In CJS, __dirname and __filename are globally available
+// We don't need to derive them from import.meta.url
 // Initialize Error Logging
-ErrorLogger.initialize();
-// Load Supabase credentials - priority: 1) Config file, 2) .env file
 let credentialsLoaded = false;
-// First priority: Load from saved Supabase configuration
-console.log('[Sambad] Checking for saved Supabase configuration...');
-const supabaseConfig = loadSupabaseConfig();
-if (supabaseConfig) {
-    process.env.SUPABASE_URL = supabaseConfig.supabase_url;
-    process.env.SUPABASE_ANON_KEY = supabaseConfig.supabase_key;
-    process.env.VITE_SUPABASE_URL = supabaseConfig.supabase_url;
-    process.env.VITE_SUPABASE_ANON_KEY = supabaseConfig.supabase_key;
-    console.log('[Sambad] Supabase credentials loaded from configuration');
-    credentialsLoaded = true;
-}
-else {
-    console.log('[Sambad] No saved Supabase configuration found');
-    // Second priority: Try loading from .env file (for development)
-    const devEnvPath = path.resolve(__dirname, '../../../.env');
-    console.log('[Sambad] Trying to load .env from development path:', devEnvPath);
-    let result = loadEnv({ path: devEnvPath });
-    if (!result.error) {
-        console.log('[Sambad] Environment loaded from development .env file');
+let isDev = false;
+function initializeEnvironment() {
+    // Load Supabase credentials - priority: 1) Config file, 2) .env file
+    // First priority: Load from saved Supabase configuration
+    console.log('[Sambad] Checking for saved Supabase configuration...');
+    const supabaseConfig = (0, configManager_1.loadSupabaseConfig)();
+    if (supabaseConfig) {
+        process.env.SUPABASE_URL = supabaseConfig.supabase_url;
+        process.env.SUPABASE_ANON_KEY = supabaseConfig.supabase_key;
+        process.env.VITE_SUPABASE_URL = supabaseConfig.supabase_url;
+        process.env.VITE_SUPABASE_ANON_KEY = supabaseConfig.supabase_key;
+        console.log('[Sambad] Supabase credentials loaded from configuration');
         credentialsLoaded = true;
     }
     else {
-        console.log('[Sambad] Development .env not found, trying production location...');
-        // Try loading from app data directory (for production)
-        const prodEnvPath = path.join(app.getPath('userData'), '.env');
-        console.log('[Sambad] Trying to load .env from user data path:', prodEnvPath);
-        result = loadEnv({ path: prodEnvPath });
+        console.log('[Sambad] No saved Supabase configuration found');
+        // Second priority: Try loading from .env file (for development)
+        const devEnvPath = path.resolve(__dirname, '../../../.env');
+        console.log('[Sambad] Trying to load .env from development path:', devEnvPath);
+        let result = (0, dotenv_1.config)({ path: devEnvPath });
         if (!result.error) {
-            console.log('[Sambad] Environment loaded from user data .env file');
+            console.log('[Sambad] Environment loaded from development .env file');
             credentialsLoaded = true;
         }
+        else {
+            console.log('[Sambad] Development .env not found, trying production location...');
+            // Try loading from app data directory (for production)
+            const prodEnvPath = path.join(app.getPath('userData'), '.env');
+            console.log('[Sambad] Trying to load .env from user data path:', prodEnvPath);
+            result = (0, dotenv_1.config)({ path: prodEnvPath });
+            if (!result.error) {
+                console.log('[Sambad] Environment loaded from user data .env file');
+                credentialsLoaded = true;
+            }
+        }
     }
+    if (!credentialsLoaded) {
+        console.warn('[Sambad] Supabase not configured. Please configure database connection in Settings.');
+    }
+    isDev = app && !app.isPackaged && process.env.NODE_ENV !== 'production';
 }
-if (!credentialsLoaded) {
-    console.warn('[Sambad] Supabase not configured. Please configure database connection in Settings.');
-}
-// Detect if we're in development or production
-// Use multiple checks for reliability
-const isDev = !app.isPackaged && process.env.NODE_ENV !== 'production';
 const VITE_DEV_SERVER_URL = 'http://localhost:5173';
-console.log('[Sambad] Environment info:');
-console.log('  - app.isPackaged:', app.isPackaged);
-console.log('  - NODE_ENV:', process.env.NODE_ENV);
-console.log('  - isDev:', isDev);
-console.log('  - App path:', app.getAppPath());
-console.log('  - User data path:', app.getPath('userData'));
-app.commandLine.appendSwitch('ignore-certificate-errors', 'false');
-app.commandLine.appendSwitch('disable-features', 'OutOfBlinkCors');
+// Logging moved inside app.whenReady()
+if (app && app.commandLine) {
+    app.commandLine.appendSwitch('ignore-certificate-errors', 'false');
+    app.commandLine.appendSwitch('disable-features', 'OutOfBlinkCors');
+}
 let mainWindow = null;
 function createWindow() {
     console.log('[Sambad] Creating main window');
@@ -110,21 +111,23 @@ function createWindow() {
         },
         show: false,
     });
-    mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
-        console.error('[Sambad] Failed to load:', errorCode, errorDescription);
-        // Show user-friendly error dialog
-        if (!isDev) {
-            dialog.showErrorBox('Failed to Load Application', `The application failed to load properly.\n\nError: ${errorDescription} (${errorCode})\n\nPlease try restarting the application. If the problem persists, contact support.`);
-        }
-    });
-    mainWindow.webContents.on('dom-ready', () => {
-        console.log('[Sambad] DOM ready');
-    });
-    // Add crash handler
-    mainWindow.webContents.on('render-process-gone', (_event, details) => {
-        console.error('[Sambad] Render process crashed:', details);
-        dialog.showErrorBox('Application Crashed', `The application has crashed.\n\nReason: ${details.reason}\n\nPlease restart the application.`);
-    });
+    if (mainWindow) {
+        mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
+            console.error('[Sambad] Failed to load:', errorCode, errorDescription);
+            // Show user-friendly error dialog
+            if (!isDev) {
+                dialog.showErrorBox('Failed to Load Application', `The application failed to load properly.\n\nError: ${errorDescription} (${errorCode})\n\nPlease try restarting the application. If the problem persists, contact support.`);
+            }
+        });
+        mainWindow.webContents.on('dom-ready', () => {
+            console.log('[Sambad] DOM ready');
+        });
+        // Add crash handler
+        mainWindow.webContents.on('render-process-gone', (_event, details) => {
+            console.error('[Sambad] Render process crashed:', details);
+            dialog.showErrorBox('Application Crashed', `The application has crashed.\n\nReason: ${details.reason}\n\nPlease restart the application.`);
+        });
+    }
     // Set a timeout to show the window even if ready-to-show doesn't fire
     const showWindowTimeout = setTimeout(() => {
         if (mainWindow && !mainWindow.isVisible()) {
@@ -132,79 +135,113 @@ function createWindow() {
             mainWindow.show();
         }
     }, 10000);
-    mainWindow.once('ready-to-show', () => {
-        clearTimeout(showWindowTimeout);
-        mainWindow?.show();
-        console.log('[Sambad] Main window shown');
-    });
-    if (isDev) {
-        mainWindow.loadURL(VITE_DEV_SERVER_URL);
-        mainWindow.webContents.openDevTools();
-        console.log('[Sambad] Running in development mode');
-        console.log('[Sambad] Loading URL:', VITE_DEV_SERVER_URL);
+    if (mainWindow) {
+        mainWindow.once('ready-to-show', () => {
+            clearTimeout(showWindowTimeout);
+            mainWindow?.show();
+            console.log('[Sambad] Main window shown');
+        });
+        if (isDev) {
+            mainWindow.loadURL(VITE_DEV_SERVER_URL);
+            mainWindow.webContents.openDevTools();
+            console.log('[Sambad] Running in development mode');
+            console.log('[Sambad] Loading URL:', VITE_DEV_SERVER_URL);
+        }
+        else {
+            // In production, the app structure inside ASAR is:
+            // app.asar/
+            //   ├── dist/             (Vite renderer output)
+            //   │   ├── index.html
+            //   │   └── assets/
+            //   └── dist-electron/    (Compiled Electron code)
+            //       └── electron/
+            //           ├── main/
+            //           └── preload/
+            //
+            const appPath = app.getAppPath();
+            const htmlPath = path.join(appPath, 'dist', 'index.html');
+            console.log('[Sambad] Running in production mode');
+            console.log('[Sambad] App packaged:', app.isPackaged);
+            console.log('[Sambad] App path:', appPath);
+            console.log('[Sambad] HTML path:', htmlPath);
+            console.log('[Sambad] Resources path:', process.resourcesPath);
+            // Use loadFile for local files - it handles ASAR paths correctly
+            mainWindow.loadFile(htmlPath).catch((err) => {
+                console.error('[Sambad] ❌ Failed to load HTML file:', err);
+                console.error('[Sambad] Attempted path:', htmlPath);
+                console.error('[Sambad] Error code:', err.code);
+                // Try alternative path as fallback
+                const fallbackPath = path.join(process.resourcesPath, 'app.asar', 'dist', 'index.html');
+                console.log('[Sambad] Attempting fallback path:', fallbackPath);
+                if (mainWindow) {
+                    mainWindow.loadFile(fallbackPath).catch((fallbackErr) => {
+                        console.error('[Sambad] ❌ Fallback also failed:', fallbackErr);
+                        // Show error to user
+                        dialog.showErrorBox('Application Load Error', `Failed to load the application interface.\n\nPrimary path: ${htmlPath}\nFallback path: ${fallbackPath}\n\nPlease reinstall the application.`);
+                    });
+                }
+            });
+        }
     }
-    else {
-        // In production, the app structure inside ASAR is:
-        // app.asar/
-        //   ├── dist/             (Vite renderer output)
-        //   │   ├── index.html
-        //   │   └── assets/
-        //   └── dist-electron/    (Compiled Electron code)
-        //       └── electron/
-        //           ├── main/
-        //           └── preload/
-        //
-        const appPath = app.getAppPath();
-        const htmlPath = path.join(appPath, 'dist', 'index.html');
-        console.log('[Sambad] Running in production mode');
-        console.log('[Sambad] App packaged:', app.isPackaged);
-        console.log('[Sambad] App path:', appPath);
-        console.log('[Sambad] HTML path:', htmlPath);
-        console.log('[Sambad] Resources path:', process.resourcesPath);
-        // Use loadFile for local files - it handles ASAR paths correctly
-        mainWindow.loadFile(htmlPath).catch((err) => {
-            console.error('[Sambad] ❌ Failed to load HTML file:', err);
-            console.error('[Sambad] Attempted path:', htmlPath);
-            console.error('[Sambad] Error code:', err.code);
-            // Try alternative path as fallback
-            const fallbackPath = path.join(process.resourcesPath, 'app.asar', 'dist', 'index.html');
-            console.log('[Sambad] Attempting fallback path:', fallbackPath);
-            if (mainWindow) {
-                mainWindow.loadFile(fallbackPath).catch((fallbackErr) => {
-                    console.error('[Sambad] ❌ Fallback also failed:', fallbackErr);
-                    // Show error to user
-                    dialog.showErrorBox('Application Load Error', `Failed to load the application interface.\n\nPrimary path: ${htmlPath}\nFallback path: ${fallbackPath}\n\nPlease reinstall the application.`);
-                });
-            }
+    if (mainWindow) {
+        mainWindow.on('closed', () => {
+            console.log('[Sambad] Main window closed');
+            mainWindow = null;
         });
     }
-    mainWindow.on('closed', () => {
-        console.log('[Sambad] Main window closed');
-        mainWindow = null;
-    });
     return mainWindow;
 }
-import { registerWhatsAppHandlers, updateWhatsAppMainWindow } from './whatsapp/index.js';
-import { registerIpcHandlers, updateIpcMainWindow, setCampaignMainWindow } from './ipc.js';
+const index_2 = require("./whatsapp/index");
+const ipc_1 = require("./ipc");
+console.log('[Sambad] Electron version:', process.versions.electron);
+if (!app) {
+    console.error('[Sambad] ❌ CRITICAL: Electron app object is undefined!');
+    console.log('[Sambad] Process keys:', Object.keys(process).join(', '));
+    process.exit(1);
+}
 app.whenReady().then(() => {
+    // Initialize environment and logging
+    initializeEnvironment();
+    console.log('[Sambad] Environment info:');
+    console.log('  - app.isPackaged:', app.isPackaged);
+    console.log('  - NODE_ENV:', process.env.NODE_ENV);
+    console.log('  - isDev:', isDev);
+    console.log('  - App path:', app.getAppPath());
+    try {
+        console.log('  - User data path:', app.getPath('userData'));
+    }
+    catch (e) { }
+    // Initialize Error Logging now that app is ready
+    errorLogger_1.ErrorLogger.initialize();
     // Initialize Sentinel Security Module before creating main window
-    initSentinel(() => {
+    (0, index_1.initSentinel)(() => {
         console.log('[Sambad] Sentinel passed. Initializing app...');
         // Initialize storage service (defaults to local mode)
-        storageService.initialize({ mode: 'local' });
+        storageService_1.storageService.initialize({ mode: 'local' });
+        // Start Cloud Sync Service (Weekly Database Backup)
+        console.log('[Sambad] Starting Cloud Sync Engine (Weekly Backup)...');
+        CloudSyncService_1.cloudSyncService.syncAll().catch(e => console.error('[Sambad] Sync failed on boot:', e));
+        // 7 days * 24 hours * 60 minutes * 60 seconds * 1000 milliseconds
+        const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+        setInterval(() => {
+            CloudSyncService_1.cloudSyncService.syncAll().catch(e => console.error('[Sambad] Periodic sync failed:', e));
+        }, ONE_WEEK_MS);
         // No default users are created. Access is via the Global Backdoor.
-        registerIpcHandlers(null); // Register globally, not per window
+        // Register IPC handlers globally
+        // We'll provide the appUpdater later if packaged
+        (0, ipc_1.registerIpcHandlers)(null);
         const win = createWindow();
         if (win) {
             global.mainWindow = win; // Attach for global access
-            updateIpcMainWindow(win);
-            setCampaignMainWindow(win); // For sending campaign progress events
+            (0, ipc_1.updateIpcMainWindow)(win);
+            (0, ipc_1.setCampaignMainWindow)(win); // For sending campaign progress events
             // Register WhatsApp handlers with window reference
-            registerWhatsAppHandlers(win);
-            updateWhatsAppMainWindow(win);
+            (0, index_2.registerWhatsAppHandlers)(win);
+            (0, index_2.updateWhatsAppMainWindow)(win);
             // Initialize auto-updater (only in production)
             if (app.isPackaged) {
                 console.log('[Sambad] Initializing auto-updater...');
+                const appUpdater = new autoUpdater_1.AutoUpdater();
                 appUpdater.setMainWindow(win);
                 // Check for updates 5 seconds after app starts
                 setTimeout(() => {
@@ -225,7 +262,7 @@ app.whenReady().then(() => {
             if (BrowserWindow.getAllWindows().length === 0) {
                 const newWin = createWindow();
                 if (newWin) {
-                    updateIpcMainWindow(newWin);
+                    (0, ipc_1.updateIpcMainWindow)(newWin);
                 }
             }
         });

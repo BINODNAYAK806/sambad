@@ -1,9 +1,57 @@
-import Database from 'better-sqlite3';
-import { app } from 'electron';
-import * as path from 'path';
-import * as fs from 'fs';
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.reports = exports.campaignRuns = exports.campaignMessages = exports.logs = exports.campaignMedia = exports.campaigns = exports.groups = exports.contacts = void 0;
+exports.initDatabase = initDatabase;
+exports.getSystemSetting = getSystemSetting;
+exports.setSystemSetting = setSystemSetting;
+exports.getDatabase = getDatabase;
+exports.closeDatabase = closeDatabase;
+exports.createPollResult = createPollResult;
+exports.storePollVote = storePollVote;
+exports.getPollVotes = getPollVotes;
+exports.getPollSummary = getPollSummary;
+exports.getPollServerStats = getPollServerStats;
+exports.createCampaignMessage = createCampaignMessage;
+exports.updateCampaignMessageStatus = updateCampaignMessageStatus;
+const BetterSqlite3 = require('better-sqlite3');
+const { app } = require('electron');
+const path = __importStar(require("path"));
+const fs = __importStar(require("fs"));
 let db = null;
-export function initDatabase() {
+function initDatabase() {
     if (db)
         return db;
     const userDataPath = app.getPath('userData');
@@ -12,7 +60,7 @@ export function initDatabase() {
     if (!fs.existsSync(userDataPath)) {
         fs.mkdirSync(userDataPath, { recursive: true });
     }
-    db = new Database(dbPath);
+    db = new BetterSqlite3(dbPath);
     db.pragma('journal_mode = WAL');
     db.pragma('foreign_keys = ON');
     createTables();
@@ -86,6 +134,63 @@ function migrateSchema() {
     }
     // Ensure index exists (safe to run after column is confirmed)
     db.exec('CREATE INDEX IF NOT EXISTS idx_campaign_messages_server_id ON campaign_messages(server_id)');
+    // Add Cloud Sync tracking columns
+    const syncTables = ['contacts', 'groups', 'group_contacts', 'campaigns', 'campaign_messages'];
+    for (const table of syncTables) {
+        const tableCols = db.prepare(`PRAGMA table_info(${table})`).all().map((col) => col.name);
+        if (!tableCols.includes('is_deleted')) {
+            console.log(`[Sambad DB] Adding sync columns to ${table}`);
+            db.exec(`ALTER TABLE ${table} ADD COLUMN is_deleted INTEGER DEFAULT 0`);
+            db.exec(`ALTER TABLE ${table} ADD COLUMN last_updated_at TEXT DEFAULT CURRENT_TIMESTAMP`);
+            db.exec(`ALTER TABLE ${table} ADD COLUMN last_synced_at TEXT`);
+        }
+    }
+    // Create table to track hard deletes
+    db.exec(`
+    CREATE TABLE IF NOT EXISTS sync_deletes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      table_name TEXT NOT NULL,
+      local_id TEXT NOT NULL,
+      local_id_2 TEXT, 
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+    // Create AFTER DELETE triggers
+    db.exec(`
+    CREATE TRIGGER IF NOT EXISTS track_contact_delete
+    AFTER DELETE ON contacts
+    BEGIN
+      INSERT INTO sync_deletes (table_name, local_id) VALUES ('contacts', old.id);
+    END;
+  `);
+    db.exec(`
+    CREATE TRIGGER IF NOT EXISTS track_group_delete
+    AFTER DELETE ON groups
+    BEGIN
+      INSERT INTO sync_deletes (table_name, local_id) VALUES ('groups', old.id);
+    END;
+  `);
+    db.exec(`
+    CREATE TRIGGER IF NOT EXISTS track_campaign_delete
+    AFTER DELETE ON campaigns
+    BEGIN
+      INSERT INTO sync_deletes (table_name, local_id) VALUES ('campaigns', old.id);
+    END;
+  `);
+    db.exec(`
+    CREATE TRIGGER IF NOT EXISTS track_message_delete
+    AFTER DELETE ON campaign_messages
+    BEGIN
+      INSERT INTO sync_deletes (table_name, local_id) VALUES ('campaign_messages', old.id);
+    END;
+  `);
+    db.exec(`
+    CREATE TRIGGER IF NOT EXISTS track_group_contact_delete
+    AFTER DELETE ON group_contacts
+    BEGIN
+      INSERT INTO sync_deletes (table_name, local_id, local_id_2) VALUES ('group_contacts', old.group_id, old.contact_id);
+    END;
+  `);
 }
 function createTables() {
     if (!db)
@@ -345,25 +450,25 @@ function createTables() {
     console.log('[Sambad DB] Poll tracking tables created successfully');
     console.log('[Sambad DB] Performance indexes created successfully');
 }
-export function getSystemSetting(key) {
+function getSystemSetting(key) {
     if (!db)
         return null;
     const row = db.prepare('SELECT value FROM system_settings WHERE key = ?').get(key);
     return row ? row.value : null;
 }
-export function setSystemSetting(key, value) {
+function setSystemSetting(key, value) {
     if (!db)
         return;
     db.prepare('INSERT OR REPLACE INTO system_settings (key, value) VALUES (?, ?)').run(key, value);
 }
-export function getDatabase() {
+function getDatabase() {
     if (!db) {
         console.log('[Sambad DB] Database not initialized. Auto-initializing...');
         return initDatabase();
     }
     return db;
 }
-export const contacts = {
+exports.contacts = {
     list: () => {
         const db = getDatabase();
         const rows = db.prepare(`
@@ -517,7 +622,7 @@ export const contacts = {
         db.prepare('DELETE FROM contacts').run();
     },
 };
-export const groups = {
+exports.groups = {
     list: () => {
         const db = getDatabase();
         return db.prepare('SELECT * FROM groups ORDER BY name').all();
@@ -584,7 +689,7 @@ export const groups = {
         db.prepare('DELETE FROM groups').run();
     },
 };
-export const campaigns = {
+exports.campaigns = {
     list: () => {
         const db = getDatabase();
         return db.prepare('SELECT * FROM campaigns ORDER BY id DESC').all();
@@ -765,8 +870,23 @@ export const campaigns = {
             variables: row.vars_json ? JSON.parse(row.vars_json) : undefined
         }));
     },
+    getRecentActivity: (limit = 10) => {
+        const db = getDatabase();
+        return db.prepare(`
+      SELECT 'campaign' as type, name as title, 'Campaign "' || name || '" ' || status as description, last_updated_at as timestamp 
+      FROM campaigns 
+      UNION ALL
+      SELECT 'contact' as type, name as title, 'Contact added: ' || coalesce(name, phone) as description, last_updated_at as timestamp 
+      FROM contacts
+      UNION ALL
+      SELECT 'group' as type, name as title, 'Group created: ' || name as description, last_updated_at as timestamp 
+      FROM groups
+      ORDER BY timestamp DESC
+      LIMIT ?
+    `).all(limit);
+    },
 };
-export const campaignMedia = {
+exports.campaignMedia = {
     listByCampaign: (campaignId) => {
         const db = getDatabase();
         return db.prepare('SELECT * FROM campaign_media WHERE campaign_id = ? ORDER BY created_at')
@@ -789,7 +909,7 @@ export const campaignMedia = {
         db.prepare('DELETE FROM campaign_media WHERE campaign_id = ?').run(campaignId);
     },
 };
-export const logs = {
+exports.logs = {
     list: (limit) => {
         const db = getDatabase();
         const sql = limit
@@ -818,7 +938,7 @@ export const logs = {
         return result.changes;
     },
 };
-export const campaignMessages = {
+exports.campaignMessages = {
     create: (message) => {
         const db = getDatabase();
         db.prepare(`
@@ -881,7 +1001,7 @@ export const campaignMessages = {
     },
 };
 // Campaign Runs - tracks each individual execution of a campaign
-export const campaignRuns = {
+exports.campaignRuns = {
     create: (campaignId, campaignName, totalCount) => {
         const db = getDatabase();
         const stmt = db.prepare(`
@@ -944,7 +1064,7 @@ export const campaignRuns = {
         db.prepare('DELETE FROM campaign_runs WHERE id = ?').run(runId);
     },
 };
-export const reports = {
+exports.reports = {
     generate: () => {
         const db = getDatabase();
         const totalContacts = db.prepare('SELECT COUNT(*) as count FROM contacts').get();
@@ -978,7 +1098,7 @@ export const reports = {
         return results;
     },
 };
-export function closeDatabase() {
+function closeDatabase() {
     if (db) {
         db.close();
         db = null;
@@ -986,7 +1106,7 @@ export function closeDatabase() {
     }
 }
 // ==================== Poll Results Functions ====================
-export function createPollResult(campaignId, messageId, question, options) {
+function createPollResult(campaignId, messageId, question, options) {
     if (!db)
         return { success: false, error: 'Database not initialized' };
     try {
@@ -1002,7 +1122,7 @@ export function createPollResult(campaignId, messageId, question, options) {
         return { success: false, error: error.message };
     }
 }
-export function storePollVote(messageId, voterJid, voterName, voterPhone, selectedOption) {
+function storePollVote(messageId, voterJid, voterName, voterPhone, selectedOption) {
     if (!db)
         return { success: false, error: 'Database not initialized' };
     try {
@@ -1065,7 +1185,7 @@ export function storePollVote(messageId, voterJid, voterName, voterPhone, select
         return { success: false, error: error.message };
     }
 }
-export function getPollVotes(campaignId) {
+function getPollVotes(campaignId) {
     if (!db)
         return { success: false, error: 'Database not initialized' };
     try {
@@ -1090,7 +1210,7 @@ export function getPollVotes(campaignId) {
         return { success: false, error: error.message };
     }
 }
-export function getPollSummary(campaignId) {
+function getPollSummary(campaignId) {
     if (!db)
         return { success: false, error: 'Database not initialized' };
     try {
@@ -1121,7 +1241,7 @@ export function getPollSummary(campaignId) {
         return {
             success: true,
             data: {
-                ...summary,
+                ...(summary || {}),
                 voteBreakdown
             }
         };
@@ -1131,7 +1251,7 @@ export function getPollSummary(campaignId) {
         return { success: false, error: error.message };
     }
 }
-export function getPollServerStats(campaignId) {
+function getPollServerStats(campaignId) {
     if (!db)
         return { success: false, error: 'Database not initialized' };
     try {
@@ -1156,7 +1276,7 @@ export function getPollServerStats(campaignId) {
     }
 }
 // ==================== Campaign Message Functions ====================
-export function createCampaignMessage(campaignId, messageId, recipientNumber, recipientName, templateText, status, serverId, errorMessage) {
+function createCampaignMessage(campaignId, messageId, recipientNumber, recipientName, templateText, status, serverId, errorMessage) {
     const db = getDatabase();
     try {
         const stmt = db.prepare(`
@@ -1170,7 +1290,7 @@ export function createCampaignMessage(campaignId, messageId, recipientNumber, re
         console.error(`[Sambad DB] Failed to create campaign message: ${error}`);
     }
 }
-export function updateCampaignMessageStatus(messageId, status, errorMessage) {
+function updateCampaignMessageStatus(messageId, status, errorMessage) {
     const db = getDatabase();
     try {
         const stmt = db.prepare(`

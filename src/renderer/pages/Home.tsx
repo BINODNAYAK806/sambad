@@ -19,13 +19,13 @@ export function Home() {
     successRate: 0,
   });
   const [isLoading, setIsLoading] = useState(true);
+  const [recentActivity, setRecentActivity] = useState<any[]>([]);
 
   const loadStats = async (silent = false) => {
     try {
       if (!silent) setIsLoading(true);
 
-      const [contactsResult, campaignsResult, runsResult] = await Promise.all([
-        window.electronAPI.contacts.list(),
+      const [campaignsResult, runsResult] = await Promise.all([
         window.electronAPI.campaigns.list(),
         window.electronAPI.campaignRuns.list(),
       ]);
@@ -56,8 +56,6 @@ export function Home() {
       const successRate = completedMessages > 0 ? (totalSent / completedMessages) * 100 : 0;
 
       setStats({
-        totalContacts: contactsResult.success ? (contactsResult.data?.length || 0) : 0,
-        totalCampaigns: campaignsResult.success ? (campaignsResult.data?.length || 0) : 0,
         activeCampaigns,
         totalRuns,
         totalMessages,
@@ -65,6 +63,19 @@ export function Home() {
         messagesFailed: totalFailed,
         successRate: Math.round(successRate * 10) / 10,
       });
+
+      // Load Recent Activity
+      if (window.electronAPI?.invoke) {
+        try {
+          const activityResult = await window.electronAPI.invoke('dashboard:getRecentActivity');
+          if (activityResult && activityResult.success) {
+            setRecentActivity(activityResult.data || []);
+          }
+        } catch (e) {
+          console.error('Failed to load recent activity', e);
+        }
+      }
+
     } catch (error) {
       console.error('Failed to load stats:', error);
     } finally {
@@ -258,41 +269,39 @@ export function Home() {
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              {[
-                {
-                  title: 'Campaign "Summer Sale" completed',
-                  time: '2 hours ago',
-                  color: 'bg-green-500',
-                },
-                {
-                  title: '156 new contacts added',
-                  time: '5 hours ago',
-                  color: 'bg-blue-500',
-                },
-                {
-                  title: 'Campaign "Newsletter" scheduled',
-                  time: 'Yesterday',
-                  color: 'bg-orange-500',
-                },
-                {
-                  title: 'WhatsApp connection restored',
-                  time: '2 days ago',
-                  color: 'bg-violet-500',
-                },
-              ].map((activity, index) => (
-                <div
-                  key={index}
-                  className="flex items-start gap-3 p-3 rounded-lg hover:bg-accent/50 transition-colors duration-200 cursor-pointer group"
-                >
-                  <div className={`mt-1 h-2 w-2 rounded-full ${activity.color} shadow-lg`} />
-                  <div className="flex-1 space-y-1">
-                    <p className="text-sm font-medium group-hover:text-primary transition-colors">
-                      {activity.title}
-                    </p>
-                    <p className="text-xs text-muted-foreground">{activity.time}</p>
+              {recentActivity.length > 0 ? recentActivity.map((activity, index) => {
+                // Determine color based on activity type
+                let color = 'bg-gray-500';
+                if (activity.type === 'campaign') color = 'bg-blue-500';
+                else if (activity.type === 'contact') color = 'bg-green-500';
+                else if (activity.type === 'group') color = 'bg-orange-500';
+
+                // Format timestamp
+                const date = new Date(activity.timestamp);
+                const timeStr = date.toLocaleString(undefined, {
+                  month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+                });
+
+                return (
+                  <div
+                    key={index}
+                    className="flex items-start gap-3 p-3 rounded-lg hover:bg-accent/50 transition-colors duration-200 cursor-pointer group"
+                  >
+                    <div className={`mt-1 h-2 w-2 rounded-full ${color} shadow-lg shrink-0`} />
+                    <div className="flex-1 space-y-1">
+                      <p className="text-sm font-medium group-hover:text-primary transition-colors">
+                        {activity.title}
+                      </p>
+                      <p className="text-xs text-muted-foreground">{activity.description}</p>
+                      <p className="text-xs text-muted-foreground/70">{timeStr}</p>
+                    </div>
                   </div>
+                );
+              }) : (
+                <div className="text-center py-6 text-sm text-muted-foreground">
+                  No recent activity found.
                 </div>
-              ))}
+              )}
             </div>
           </CardContent>
         </Card>
