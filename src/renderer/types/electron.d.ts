@@ -353,6 +353,7 @@ export interface ElectronAPI {
 
   on: (channel: string, callback: (event: any, ...args: any[]) => void) => void;
   removeListener: (channel: string, callback: (event: any, ...args: any[]) => void) => void;
+  invoke: (channel: string, ...args: any[]) => Promise<any>;
 }
 
 declare global {

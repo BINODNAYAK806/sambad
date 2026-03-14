@@ -547,6 +547,9 @@ const api = {
   removeListener: (channel: string, callback: (event: any, ...args: any[]) => void) => {
     ipcRenderer.removeListener(channel, callback);
   },
+
+  invoke: (channel: string, ...args: any[]): Promise<any> =>
+    ipcRenderer.invoke(channel, ...args),
 };
 
 console.log('[Preload] Starting preload script');

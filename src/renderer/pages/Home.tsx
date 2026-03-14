@@ -56,6 +56,8 @@ export function Home() {
       const successRate = completedMessages > 0 ? (totalSent / completedMessages) * 100 : 0;
 
       setStats({
+        totalContacts: 0, // Not used in recent activity optimization but required by state type
+        totalCampaigns: campaignsResult.data ? campaignsResult.data.length : 0,
         activeCampaigns,
         totalRuns,
         totalMessages,
