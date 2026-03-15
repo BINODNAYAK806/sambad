@@ -1,43 +1,66 @@
+"use strict";
 /**
  * CampaignExecutor
- * 
+ *
  * Orchestrates campaign message sending with rotation strategies.
  * Handles message execution, error recovery, and progress tracking.
  */
-
-import { WhatsAppClientSingleton } from '../whatsapp/WhatsAppClient';
-import type {
-    CampaignTask,
-    ExecutionResult,
-    SendResult,
-    ExecutionError,
-    SendingStrategy,
-    CampaignMessage
-} from '../types/campaign';
-import { ServerRotationManager } from './ServerRotationManager';
-import { ServerHealthMonitor } from './ServerHealthMonitor';
-import type { BrowserWindow } from 'electron';
-import * as path from 'path';
-import { createPollResult, createCampaignMessage } from '../db/index';
-
-export class CampaignExecutor {
-    private rotationManager: ServerRotationManager;
-    private healthMonitor: ServerHealthMonitor;
-    private isPaused: boolean = false;
-    private shouldStop: boolean = false;
-    private sentCount: number = 0;
-    private failedCount: number = 0;
-    private errors: ExecutionError[] = [];
-    private pollResultCreated: boolean = false;
-
-    constructor(
-        private whatsAppClient: WhatsAppClientSingleton,
-        private mainWindow: BrowserWindow | null
-    ) {
-        this.rotationManager = new ServerRotationManager();
-        this.healthMonitor = new ServerHealthMonitor(whatsAppClient);
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
     }
-
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.CampaignExecutor = void 0;
+const ServerRotationManager_1 = require("./ServerRotationManager");
+const ServerHealthMonitor_1 = require("./ServerHealthMonitor");
+const path = __importStar(require("path"));
+const index_1 = require("../db/index");
+class CampaignExecutor {
+    whatsAppClient;
+    mainWindow;
+    rotationManager;
+    healthMonitor;
+    isPaused = false;
+    shouldStop = false;
+    sentCount = 0;
+    failedCount = 0;
+    errors = [];
+    pollResultCreated = false;
+    constructor(whatsAppClient, mainWindow) {
+        this.whatsAppClient = whatsAppClient;
+        this.mainWindow = mainWindow;
+        this.rotationManager = new ServerRotationManager_1.ServerRotationManager();
+        this.healthMonitor = new ServerHealthMonitor_1.ServerHealthMonitor(whatsAppClient);
+    }
     /**
      * Execute a campaign with the specified strategy
      * @param campaignTask - Campaign task with messages and settings
@@ -45,21 +68,13 @@ export class CampaignExecutor {
      * @param designatedServerId - Server ID for single strategy
      * @returns Execution result with statistics
      */
-    async execute(
-        campaignTask: CampaignTask,
-        strategy: SendingStrategy,
-        designatedServerId: number = 1,
-        runId: number | null = null
-    ): Promise<ExecutionResult> {
+    async execute(campaignTask, strategy, designatedServerId = 1, runId = null) {
         console.log(`[CampaignExecutor] 🚀 Starting execution - Strategy: ${strategy}, Designated Server: ${designatedServerId}`);
         console.log(`[CampaignExecutor] Total messages: ${campaignTask.messages.length}`);
-
         // Reset state
         this.reset();
         this.pollResultCreated = false;
-
         const totalMessages = campaignTask.messages.length;
-
         try {
             for (let i = 0; i < totalMessages; i++) {
                 // Check for stop signal
@@ -67,27 +82,24 @@ export class CampaignExecutor {
                     console.log('[CampaignExecutor] ⏹️ Stopped by user');
                     break;
                 }
-
                 // Wait while paused
                 while (this.isPaused && !this.shouldStop) {
                     console.log('[CampaignExecutor] ⏸️ Paused, waiting...');
                     await this.delay(2000);
                 }
-
-                if (this.shouldStop) break;
-
+                if (this.shouldStop)
+                    break;
                 // Select server based on strategy
                 const serverId = await this.selectServer(strategy, designatedServerId, i);
-
                 // Send message
                 const message = campaignTask.messages[i];
                 const result = await this.sendMessage(message, serverId, campaignTask, runId);
-
                 // Track result
                 if (result.success) {
                     this.sentCount++;
                     console.log(`[CampaignExecutor] ✅ Sent ${this.sentCount}/${totalMessages} via Server ${serverId}`);
-                } else {
+                }
+                else {
                     this.failedCount++;
                     this.errors.push({
                         messageIndex: i,
@@ -97,98 +109,77 @@ export class CampaignExecutor {
                     });
                     console.log(`[CampaignExecutor] ❌ Failed ${this.failedCount}/${totalMessages} via Server ${serverId}: ${result.error}`);
                 }
-
                 // Send progress update
                 this.sendProgressUpdate(i + 1, totalMessages, message, campaignTask.campaignId);
-
                 // Apply delay before next message (except for last message)
                 if (i < totalMessages - 1) {
                     await this.applyDelay(campaignTask.delaySettings);
                 }
             }
-
             // Log final statistics
             this.rotationManager.logDistribution();
-
             return {
                 success: true,
                 sentCount: this.sentCount,
                 failedCount: this.failedCount,
                 errors: this.errors
             };
-
-        } catch (error: any) {
+        }
+        catch (error) {
             console.error('[CampaignExecutor] Fatal error:', error);
             return {
                 success: false,
                 sentCount: this.sentCount,
                 failedCount: this.failedCount,
                 errors: [...this.errors, {
-                    messageIndex: -1,
-                    recipientNumber: 'N/A',
-                    error: error.message || 'Fatal execution error',
-                    serverId: -1
-                }]
+                        messageIndex: -1,
+                        recipientNumber: 'N/A',
+                        error: error.message || 'Fatal execution error',
+                        serverId: -1
+                    }]
             };
         }
     }
-
     /**
      * Select the appropriate server based on strategy
      */
-    private async selectServer(
-        strategy: SendingStrategy,
-        designatedServerId: number,
-        messageIndex: number
-    ): Promise<number> {
+    async selectServer(strategy, designatedServerId, messageIndex) {
         if (strategy === 'single') {
             // Single server strategy - wait for the designated server
             const serverId = this.rotationManager.getSingleServer(designatedServerId);
             console.log(`[CampaignExecutor] 📍 Single Mode: Message ${messageIndex + 1} → Server ${serverId}`);
-
             // Wait for server to be ready
             while (!this.healthMonitor.isServerReady(serverId) && !this.shouldStop) {
                 console.log(`[CampaignExecutor] ⏳ Waiting for Server ${serverId} to reconnect...`);
                 await this.delay(2000);
             }
-
             return serverId;
-        } else {
+        }
+        else {
             // Rotational strategy
             const availableServers = this.healthMonitor.getAvailableServers();
-
             if (availableServers.length === 0) {
                 console.log('[CampaignExecutor] ⚠️ No servers available, waiting...');
                 const serverId = await this.healthMonitor.waitForAnyServer(60000);
                 return this.rotationManager.getNextServer([serverId], messageIndex);
             }
-
             const serverId = this.rotationManager.getNextServer(availableServers, messageIndex);
             console.log(`[CampaignExecutor] 🔄 Rotational: Message ${messageIndex + 1} → Server ${serverId} (Available: ${availableServers.join(', ')})`);
-
             return serverId;
         }
     }
-
     /**
      * Send a single message via the specified server
      */
-    private async sendMessage(
-        message: CampaignMessage,
-        serverId: number,
-        campaignTask: CampaignTask,
-        runId: number | null = null
-    ): Promise<SendResult> {
+    async sendMessage(message, serverId, campaignTask, runId = null) {
         const campaignIdNum = parseInt(campaignTask.campaignId.toString());
-        const statusToReport = (success: boolean) => success ? 'sent' : 'failed';
-
+        const statusToReport = (success) => success ? 'sent' : 'failed';
         try {
             // Format phone number
             let number = message.recipientNumber?.replace(/\D/g, '') || '';
             if (number.length < 10) {
                 throw new Error('Invalid phone number');
             }
-
             // Validate number exists on WhatsApp
             console.log(`[CampaignExecutor] 🔍 Validating number ${number} on Server ${serverId}...`);
             const numberId = await this.whatsAppClient.getNumberId(serverId, number);
@@ -198,59 +189,26 @@ export class CampaignExecutor {
             }
             const chatId = numberId._serialized;
             console.log(`[CampaignExecutor] ✅ Number validated: ${chatId}`);
-
             // Prepare message content
-            const content = this.personalizeMessage(
-                message.templateText,
-                message.variables || {},
-                message.recipientName || ''
-            );
+            const content = this.personalizeMessage(message.templateText, message.variables || {}, message.recipientName || '');
             console.log(`[CampaignExecutor] 📝 Final Personalized Content (Length: ${content.length}): "${content.substring(0, 50)}${content.length > 50 ? '...' : ''}"`);
-
             // Track if content (caption/text) has been sent
             let contentSent = false;
-
             // 1. Send Poll (Exclusive)
             if (campaignTask.isPoll && campaignTask.pollQuestion && campaignTask.pollOptions) {
-                const pollMessage = await this.whatsAppClient.sendPoll(
-                    serverId,
-                    chatId,
-                    campaignTask.pollQuestion,
-                    campaignTask.pollOptions
-                );
-
+                const pollMessage = await this.whatsAppClient.sendPoll(serverId, chatId, campaignTask.pollQuestion, campaignTask.pollOptions);
                 if (pollMessage && pollMessage.key && pollMessage.key.id) {
                     // Create campaign message record for each recipient
                     if (!isNaN(campaignIdNum)) {
-                        createCampaignMessage(
-                            campaignIdNum,
-                            pollMessage.key.id,
-                            message.recipientNumber || '',
-                            message.recipientName,
-                            campaignTask.pollQuestion,
-                            'sent',
-                            serverId
-                        );
-
+                        (0, index_1.createCampaignMessage)(campaignIdNum, pollMessage.key.id, message.recipientNumber || '', message.recipientName, campaignTask.pollQuestion, 'sent', serverId);
                         // Also add to run history if possible
                         if (runId) {
-                            const db = await import('../db/index');
-                            db.campaignRuns.addMessage(
-                                runId,
-                                message.recipientNumber || '',
-                                message.recipientName || 'Unknown',
-                                'sent'
-                            );
+                            const db = await Promise.resolve().then(() => __importStar(require('../db/index')));
+                            db.campaignRuns.addMessage(runId, message.recipientNumber || '', message.recipientName || 'Unknown', 'sent');
                         }
-
                         // Create poll result ONCE per campaign (not per message)
                         if (!this.pollResultCreated) {
-                            createPollResult(
-                                campaignIdNum,
-                                pollMessage.key.id,
-                                campaignTask.pollQuestion,
-                                campaignTask.pollOptions
-                            );
+                            (0, index_1.createPollResult)(campaignIdNum, pollMessage.key.id, campaignTask.pollQuestion, campaignTask.pollOptions);
                             this.pollResultCreated = true;
                             console.log(`[CampaignExecutor] 📊 Created poll result for campaign ${campaignIdNum}`);
                         }
@@ -258,51 +216,52 @@ export class CampaignExecutor {
                 }
                 contentSent = true;
                 return { success: true, serverId, timestamp: new Date() };
-            } else {
+            }
+            else {
                 // 2. Send Template Image
-                if (message.templateImage && (message.templateImage.path || (message.templateImage as any).url)) {
-                    const filePath = message.templateImage.path || (message.templateImage as any).url;
+                if (message.templateImage && (message.templateImage.path || message.templateImage.url)) {
+                    const filePath = message.templateImage.path || message.templateImage.url;
                     console.log(`[CampaignExecutor] 🖼️ Sending Template Image: ${filePath}`);
                     try {
                         const mediaObj = this.whatsAppClient.getMessageMedia().fromFilePath(filePath, 'image');
                         await this.whatsAppClient.sendMessage(serverId, chatId, mediaObj, { caption: content });
                         console.log(`[CampaignExecutor] ✅ Template Image Sent`);
                         contentSent = true;
-                    } catch (err) {
+                    }
+                    catch (err) {
                         console.error(`[CampaignExecutor] ❌ Failed to send template image: ${err}`);
                     }
                 }
-
                 // 3. Send Media Attachments
                 if (message.mediaAttachments && message.mediaAttachments.length > 0) {
                     console.log(`[CampaignExecutor] 📂 Sending ${message.mediaAttachments.length} Attachments to ${chatId}`);
                     for (let idx = 0; idx < message.mediaAttachments.length; idx++) {
                         const media = message.mediaAttachments[idx];
-                        const filePath = media.path || (media as any).url;
+                        const filePath = media.path || media.url;
                         if (filePath) {
                             console.log(`[CampaignExecutor] 📄 Processing Attachment ${idx + 1}/${message.mediaAttachments.length}: ${filePath} (Type: ${media.type})`);
                             try {
                                 const mediaObj = this.whatsAppClient.getMessageMedia().fromFilePath(filePath, media.type);
                                 // Use media's own caption if available, otherwise fallback to main content if not yet sent
-                                const captionToUse = (media as any).caption || (!contentSent ? content : undefined);
+                                const captionToUse = media.caption || (!contentSent ? content : undefined);
                                 const options = captionToUse ? { caption: captionToUse } : undefined;
-
                                 if (options?.caption) {
                                     console.log(`[CampaignExecutor] 🏷️ Using caption for attachment: \"${options.caption.substring(0, 30)}...\"`);
                                 }
-
                                 await this.whatsAppClient.sendMessage(serverId, chatId, mediaObj, options);
                                 console.log(`[CampaignExecutor] ✅ Attachment Sent: ${path.basename(filePath)}`);
-                                if (!contentSent) contentSent = true;
-                            } catch (err) {
+                                if (!contentSent)
+                                    contentSent = true;
+                            }
+                            catch (err) {
                                 console.error(`[CampaignExecutor] ❌ Failed to send attachment ${filePath}: ${err}`);
                             }
-                        } else {
+                        }
+                        else {
                             console.warn(`[CampaignExecutor] ⚠️ Attachment skipped: No path or url found`, media);
                         }
                     }
                 }
-
                 // 4. Send Text Fallback
                 // If no media was sent (or failed) and no poll, send the text/caption itself
                 if (!contentSent) {
@@ -310,63 +269,31 @@ export class CampaignExecutor {
                     if (textMessage && textMessage.key && textMessage.key.id) {
                         // Log standard text message
                         if (!isNaN(campaignIdNum)) {
-                            createCampaignMessage(
-                                campaignIdNum,
-                                textMessage.key.id,
-                                message.recipientNumber || '',
-                                message.recipientName,
-                                content,
-                                'sent',
-                                serverId
-                            );
-                            
+                            (0, index_1.createCampaignMessage)(campaignIdNum, textMessage.key.id, message.recipientNumber || '', message.recipientName, content, 'sent', serverId);
                             if (runId) {
-                                const db = await import('../db/index');
-                                db.campaignRuns.addMessage(
-                                    runId, 
-                                    message.recipientNumber || '', 
-                                    message.recipientName || 'Unknown', 
-                                    'sent'
-                                );
+                                const db = await Promise.resolve().then(() => __importStar(require('../db/index')));
+                                db.campaignRuns.addMessage(runId, message.recipientNumber || '', message.recipientName || 'Unknown', 'sent');
                             }
                         }
                     }
                 }
             }
-
             return {
                 success: true,
                 serverId,
                 timestamp: new Date()
             };
-
-        } catch (error: any) {
+        }
+        catch (error) {
             // Log failure to database
             if (!isNaN(campaignIdNum)) {
                 const dummyId = `fail_${Date.now()}_${message.recipientNumber}`;
-                createCampaignMessage(
-                    campaignIdNum,
-                    dummyId,
-                    message.recipientNumber || '',
-                    message.recipientName,
-                    message.templateText || '',
-                    'failed',
-                    serverId,
-                    error.message || 'Unknown error'
-                );
-
+                (0, index_1.createCampaignMessage)(campaignIdNum, dummyId, message.recipientNumber || '', message.recipientName, message.templateText || '', 'failed', serverId, error.message || 'Unknown error');
                 if (runId) {
-                    const db = await import('../db/index');
-                    db.campaignRuns.addMessage(
-                        runId,
-                        message.recipientNumber || '',
-                        message.recipientName || 'Unknown',
-                        'failed',
-                        error.message || 'Error'
-                    );
+                    const db = await Promise.resolve().then(() => __importStar(require('../db/index')));
+                    db.campaignRuns.addMessage(runId, message.recipientNumber || '', message.recipientName || 'Unknown', 'failed', error.message || 'Error');
                 }
             }
-
             return {
                 success: false,
                 error: error.message || 'Unknown error',
@@ -375,20 +302,13 @@ export class CampaignExecutor {
             };
         }
     }
-
     /**
      * Personalize message with variable substitution
      */
-    private personalizeMessage(
-        template: string,
-        variables: Record<string, string>,
-        recipientName: string
-    ): string {
+    personalizeMessage(template, variables, recipientName) {
         let result = template;
-
         // Replace {{name}} with recipient name
         result = result.replace(/\{\{name\}\}/gi, recipientName || '');
-
         // Replace v1-v10 variables (ensure empty values become blank)
         for (let i = 1; i <= 10; i++) {
             const key = `v${i}`;
@@ -396,7 +316,6 @@ export class CampaignExecutor {
             const pattern = new RegExp(`\\{\\{${key}\\}\\}`, 'gi');
             result = result.replace(pattern, value);
         }
-
         // Replace any other custom variables that might exist
         Object.keys(variables).forEach(key => {
             // Skip v1-v10 as already processed above
@@ -405,18 +324,15 @@ export class CampaignExecutor {
                 result = result.replace(pattern, variables[key] || '');
             }
         });
-
         return result;
     }
-
     /**
      * Apply delay between messages
      */
-    private async applyDelay(settings: CampaignTask['delaySettings']): Promise<void> {
+    async applyDelay(settings) {
         console.log('[CampaignExecutor] 🔍 Processing Delay Settings:', JSON.stringify(settings, null, 2));
-        let delayMs: number;
-
-        const presets: Record<string, { min: number, max: number }> = {
+        let delayMs;
+        const presets = {
             'very-short': { min: 1, max: 5 },
             'short': { min: 5, max: 20 },
             'medium': { min: 20, max: 50 },
@@ -424,32 +340,30 @@ export class CampaignExecutor {
             'very-long': { min: 120, max: 300 },
             'manual': { min: 20, max: 50 } // Default for manual if not provided
         };
-
         if (settings.minDelay !== undefined && settings.maxDelay !== undefined &&
             settings.minDelay !== null && settings.maxDelay !== null) {
             // Use custom range (provided in seconds, convert to ms)
             const min = settings.minDelay * 1000;
             const max = settings.maxDelay * 1000;
             delayMs = Math.floor(Math.random() * (max - min + 1)) + min;
-        } else {
+        }
+        else {
             // Use preset range (defined in seconds, convert to ms)
             const preset = presets[settings.preset] || presets.medium;
             const min = preset.min * 1000;
             const max = preset.max * 1000;
             delayMs = Math.floor(Math.random() * (max - min + 1)) + min;
         }
-
         if (delayMs > 0) {
             console.log(`[CampaignExecutor] ⏱️ Resolved Delay: ${(delayMs / 1000).toFixed(1)}s (Range: ${settings.minDelay || 'preset'}-${settings.maxDelay || 'preset'})`);
             await this.delay(delayMs);
             console.log(`[CampaignExecutor] ✅ Delay finished, proceeding to next message`);
         }
     }
-
     /**
      * Send progress update to frontend
      */
-    private sendProgressUpdate(current: number, total: number, message: CampaignMessage, campaignId: number): void {
+    sendProgressUpdate(current, total, message, campaignId) {
         if (this.mainWindow && !this.mainWindow.isDestroyed()) {
             const progress = Math.round((current / total) * 100);
             this.mainWindow.webContents.send('campaign:progress', {
@@ -463,35 +377,31 @@ export class CampaignExecutor {
             });
         }
     }
-
     /**
      * Pause execution
      */
-    pause(): void {
+    pause() {
         this.isPaused = true;
         console.log('[CampaignExecutor] ⏸️ Paused');
     }
-
     /**
      * Resume execution
      */
-    resume(): void {
+    resume() {
         this.isPaused = false;
         console.log('[CampaignExecutor] ▶️ Resumed');
     }
-
     /**
      * Stop execution
      */
-    stop(): void {
+    stop() {
         this.shouldStop = true;
         console.log('[CampaignExecutor] ⏹️ Stopped');
     }
-
     /**
      * Reset execution state
      */
-    private reset(): void {
+    reset() {
         this.isPaused = false;
         this.shouldStop = false;
         this.sentCount = 0;
@@ -499,11 +409,12 @@ export class CampaignExecutor {
         this.errors = [];
         this.rotationManager.reset();
     }
-
     /**
      * Helper delay function
      */
-    private delay(ms: number): Promise<void> {
+    delay(ms) {
         return new Promise(resolve => setTimeout(resolve, ms));
     }
 }
+exports.CampaignExecutor = CampaignExecutor;
+//# sourceMappingURL=CampaignExecutor.js.map
