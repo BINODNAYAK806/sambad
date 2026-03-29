@@ -30,6 +30,7 @@ import { MediaAttachmentSelector, type MediaAttachment } from './MediaAttachment
 import { ContactSelector } from './ContactSelector';
 import type { Campaign, Group } from '../types/electron';
 import type { DelaySettings } from '../types/delay';
+import { toLocalUrl } from '../utils/url';
 
 type CampaignDialogProps = {
   open: boolean;
@@ -154,7 +155,7 @@ export function CampaignDialog({ open, onOpenChange, onSuccess, campaign }: Camp
           fileName: media.file_name,
           fileSize: media.file_size,
           isExisting: true,
-          preview: media.file_type && media.file_type.startsWith('image') ? media.file_path : undefined,
+          preview: media.file_type && media.file_type.startsWith('image') ? toLocalUrl(media.file_path) : undefined,
         }));
         setMediaAttachments(existingAttachments);
       }
@@ -168,7 +169,7 @@ export function CampaignDialog({ open, onOpenChange, onSuccess, campaign }: Camp
       setTemplateImage({
         existingPath: campaign.template_image_path,
         existingName: campaign.template_image_name,
-        preview: campaign.template_image_path,
+        preview: toLocalUrl(campaign.template_image_path),
       });
     }
   };

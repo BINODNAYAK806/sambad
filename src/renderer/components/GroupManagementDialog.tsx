@@ -19,6 +19,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import type { Group } from '../types/electron';
 
 type GroupManagementDialogProps = {
@@ -126,7 +127,7 @@ export function GroupManagementDialog({ open, onOpenChange, onGroupCreated }: Gr
             </Alert>
           )}
 
-          <div className="border rounded-lg">
+          <ScrollArea className="h-[300px] border rounded-lg">
             {isLoading ? (
               <div className="py-8 text-center text-muted-foreground">
                 Loading groups...
@@ -139,7 +140,7 @@ export function GroupManagementDialog({ open, onOpenChange, onGroupCreated }: Gr
               </div>
             ) : (
               <Table>
-                <TableHeader>
+                <TableHeader className="sticky top-0 bg-background z-10">
                   <TableRow>
                     <TableHead>Group Name</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
@@ -163,7 +164,7 @@ export function GroupManagementDialog({ open, onOpenChange, onGroupCreated }: Gr
                 </TableBody>
               </Table>
             )}
-          </div>
+          </ScrollArea>
         </div>
       </DialogContent>
     </Dialog>

@@ -50,6 +50,13 @@ async function initSentinel(onSuccess) {
     if (isValidationInProgress)
         return;
     isValidationInProgress = true;
+    // Developer Bypass
+    if (getIsDev()) {
+        console.log('[Sentinel] Development mode detected. Bypassing security check.');
+        isValidationInProgress = false;
+        onSuccess();
+        return;
+    }
     try {
         const deviceId = (0, hardware_1.getDeviceFingerprint)();
         const storedLicense = (0, store_1.getLicense)();

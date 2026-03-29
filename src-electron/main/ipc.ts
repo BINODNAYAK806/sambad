@@ -123,6 +123,7 @@ async function startCampaignInternal(campaign: any) {
     .sort((a, b) => a - b);
 
   console.log(`[IPC] Start Check: Campaign=${fullCampaign.campaignId}, Strategy=${strategy}, ServerId=${serverId}, Available Servers=[${availableServers.join(', ')}], Preset=${fullCampaign.delaySettings?.preset}`);
+  console.log(`[IPC] Campaign Messages to execute: ${fullCampaign.messages?.length || 0}`);
 
   if (strategy === 'rotational' && !anyReady) {
     throw new Error('No WhatsApp servers are connected. Please connect at least one server in Settings → WhatsApp Accounts.');

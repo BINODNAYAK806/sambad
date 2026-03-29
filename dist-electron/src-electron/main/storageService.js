@@ -321,6 +321,10 @@ class StorageService {
             }
             if (messages.length === 0) {
                 messages = db.campaignMessages.getByCampaign(id);
+                console.log(`[Storage] Fetched ${messages.length} messages from local campaign_messages table for campaign ${id}`);
+            }
+            else {
+                console.log(`[Storage] Fetched ${messages.length} messages from Cloud for campaign ${id}`);
             }
             // Fallback: If no messages found in campaign_messages table, generate them from linked contacts
             // This is crucial for local mode where campaign_messages might not be pre-populated

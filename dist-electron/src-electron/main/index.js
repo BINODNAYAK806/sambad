@@ -34,12 +34,55 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 const electron_1 = require("electron");
-const dotenv_1 = require("dotenv");
-const path = __importStar(require("path"));
 const fs = __importStar(require("fs"));
+const path = __importStar(require("path"));
+const node_url_1 = require("node:url");
+if (process.platform === 'win32') {
+    electron_1.app.setAppUserModelId('com.wapro.whatsapp');
+}
+// --- PORTABILITY: Strict Data Preservation & Drive Logic ---
+function getSmartUserDataPath() {
+    const defaultCPath = electron_1.app.getPath('userData'); // Standard C: path
+    const customDPath = 'D:/Wapro/AppData';
+    try {
+        const dHasData = fs.existsSync(path.join(customDPath, 'sambad.db'));
+        const cHasData = fs.existsSync(path.join(defaultCPath, 'sambad.db'));
+        // 1. If data is already on D: -> Keep it there (Supports current D: users)
+        if (dHasData) {
+            console.log('[Sambad] Priority: Existing data detected on D: drive. Using it.');
+            return customDPath;
+        }
+        // 2. If data is on C: -> KEEP IT THERE (Ensures NO change for old C: users)
+        if (cHasData) {
+            console.log('[Sambad] Priority: Existing data detected on C: drive. Staying on C: to prevent drive changes.');
+            return defaultCPath;
+        }
+        // 3. New Installation + D: Drive available -> Use D: for space saving
+        if (fs.existsSync('D:/')) {
+            console.log('[Sambad] Priority: New installation, using D: drive to save space.');
+            if (!fs.existsSync(customDPath))
+                fs.mkdirSync(customDPath, { recursive: true });
+            return customDPath;
+        }
+    }
+    catch (e) {
+        console.error('[Sambad] Error in drive detection:', e);
+    }
+    // 4. Default Fallback
+    return defaultCPath;
+}
+const chosenPath = getSmartUserDataPath();
+electron_1.app.setPath('userData', chosenPath);
+console.log('[Sambad] Final UserData Path set to:', chosenPath);
+// -----------------------------------------------------------------------
+const dotenv_1 = require("dotenv");
 const node_dns_1 = require("node:dns");
 // Initialize DNS order
 (0, node_dns_1.setDefaultResultOrder)('ipv4first');
+// Register custom protocols
+electron_1.protocol.registerSchemesAsPrivileged([
+    { scheme: 'app-data', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }
+]);
 // Add global uncaught exception handler to prevent EPIPE crashes
 // This happens when the terminal that launched the app is closed/broken
 process.on('uncaughtException', (error) => {
@@ -151,7 +194,16 @@ function createWindow() {
         minWidth: 900,
         minHeight: 600,
         title: 'Wapro - Smart Marketing . Safe Sending',
-        icon: path.join(process.env.VITE_PUBLIC || path.join(__dirname, '../../public'), 'icon.png'),
+        icon: (() => {
+            const { nativeImage } = require('electron');
+            const p = electron_1.app.isPackaged
+                ? path.join(electron_1.app.getAppPath(), 'dist', 'icon.png')
+                : path.join(electron_1.app.getAppPath(), 'public', 'icon.png');
+            const exists = fs.existsSync(p);
+            console.log(`[Sambad] 🖼️ Loading Taskbar Icon: ${p}`);
+            console.log(`[Sambad] 🔍 File Exists: ${exists ? '✅' : '❌'}`);
+            return exists ? nativeImage.createFromPath(p) : undefined;
+        })(),
         frame: false, // Frameless window for custom title bar
         titleBarStyle: 'hidden',
         autoHideMenuBar: true,
@@ -191,6 +243,14 @@ function createWindow() {
     if (mainWindow) {
         mainWindow.once('ready-to-show', () => {
             clearTimeout(showWindowTimeout);
+            // Explicitly set icon again on show (sometimes helps Windows refresh taskbar)
+            const { nativeImage } = require('electron');
+            const iconPath = electron_1.app.isPackaged
+                ? path.join(electron_1.app.getAppPath(), 'dist', 'icon.png')
+                : path.join(electron_1.app.getAppPath(), 'public', 'icon.png');
+            if (fs.existsSync(iconPath)) {
+                mainWindow?.setIcon(nativeImage.createFromPath(iconPath));
+            }
             mainWindow?.show();
             console.log('[Sambad] Main window shown');
         });
@@ -253,6 +313,32 @@ if (!electron_1.app) {
     process.exit(1);
 }
 electron_1.app.whenReady().then(() => {
+    // Handle app-data protocol
+    electron_1.protocol.handle('app-data', (request) => {
+        try {
+            const url = request.url.replace('app-data://', '');
+            const decodedPath = decodeURIComponent(url);
+            const userDataPath = electron_1.app.getPath('userData');
+            const fullPath = path.join(userDataPath, decodedPath);
+            // Security check: Ensure the path is within userData (Case-insensitive for Windows)
+            const normalizedFull = fullPath.replace(/\\/g, '/').toLowerCase();
+            const normalizedUser = userDataPath.replace(/\\/g, '/').toLowerCase();
+            if (!normalizedFull.startsWith(normalizedUser)) {
+                console.error('[Sambad] Protocol Security Violation:', fullPath);
+                console.error('  - Full (normalized):', normalizedFull);
+                console.error('  - User (normalized):', normalizedUser);
+                return new Response('Access Denied', { status: 403 });
+            }
+            if (!fs.existsSync(fullPath)) {
+                return new Response('Not Found', { status: 404 });
+            }
+            return electron_1.net.fetch((0, node_url_1.pathToFileURL)(fullPath).toString());
+        }
+        catch (err) {
+            console.error('[Sambad] Protocol Handler Error:', err);
+            return new Response('Internal Server Error', { status: 500 });
+        }
+    });
     // Initialize environment and logging
     initializeEnvironment();
     console.log('[Sambad] Environment info:');

@@ -573,10 +573,35 @@ export class WhatsAppClientSingleton {
         this.log(serverId, 'Logout complete - session cleared');
     }
 
+    private async waitForReady(serverId: number, timeout: number = 10000): Promise<boolean> {
+        const startTime = Date.now();
+        while (Date.now() - startTime < timeout) {
+            if (this.states[serverId] === 'ready' && this.socks[serverId]) {
+                return true;
+            }
+            // If it's an error or disconnected, try to re-initialize if not already doing so
+            if (this.states[serverId] === 'error' || this.states[serverId] === 'disconnected') {
+                this.log(serverId, 'Waiting for ready: Server is in error/disconnected state, triggering init...');
+                this.initialize(serverId).catch(() => {});
+            }
+            await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+        return false;
+    }
+
     async sendMessage(serverId: number, chatId: string, content: string | any, options?: any): Promise<any> {
+        // Wait for ready state if not already
+        if (this.states[serverId] !== 'ready') {
+            this.log(serverId, 'sendMessage: Server not ready, waiting for reconnection...');
+            const ready = await this.waitForReady(serverId);
+            if (!ready) {
+                throw new Error(`WhatsApp server ${serverId} connection timeout. Please check your internet.`);
+            }
+        }
+
         const sock = this.socks[serverId];
-        if (this.states[serverId] !== 'ready' || !sock) {
-            throw new Error(`WhatsApp server ${serverId} is not ready`);
+        if (!sock) {
+            throw new Error(`WhatsApp server ${serverId} socket lost after reconnection`);
         }
 
         const jid = this.formatJid(chatId);
@@ -642,6 +667,12 @@ export class WhatsAppClientSingleton {
     }
 
     async getNumberId(serverId: number, number: string): Promise<any> {
+        // Wait for ready state
+        if (this.states[serverId] !== 'ready') {
+            this.log(serverId, `getNumberId: Waiting for server to be ready to check ${number}...`);
+            await this.waitForReady(serverId);
+        }
+
         const sock = this.socks[serverId];
         if (!sock) {
             console.error(`[WhatsApp] [Server ${serverId}] getNumberId failed: Socket not initialized`);

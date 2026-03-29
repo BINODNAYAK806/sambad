@@ -20,7 +20,6 @@ import {
   XCircle,
   FileText,
   AlertCircle,
-  ImageIcon,
   Eye,
   Download,
   RefreshCw,
@@ -58,6 +57,7 @@ import { CampaignRunner } from '../components/CampaignRunner';
 import { PollResultsDialog } from '../components/PollResultsDialog';
 import type { Campaign } from '../types/electron';
 import { toast } from 'sonner';
+import { toLocalUrl } from '../utils/url';
 
 export const Campaigns = React.memo(() => {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
@@ -529,9 +529,11 @@ export const Campaigns = React.memo(() => {
             <div className="flex-1 p-4 overflow-y-auto space-y-3">
               {previewCampaign?.template_image_path && (
                 <div className="bg-white p-1 rounded-lg self-start max-w-[85%]">
-                  <div className="aspect-square bg-slate-100 rounded flex items-center justify-center">
-                    <ImageIcon className="h-8 w-8 text-slate-300" />
-                  </div>
+                  <img 
+                    src={toLocalUrl(previewCampaign.template_image_path)} 
+                    className="w-full h-auto rounded object-contain max-h-[300px]" 
+                    alt="Template"
+                  />
                 </div>
               )}
               <div className="bg-white p-3 rounded-lg self-start max-w-[90%] relative shadow-sm">

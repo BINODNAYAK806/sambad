@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { X, Upload, Image, FileText, Video } from 'lucide-react';
+import { toLocalUrl } from '../utils/url';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -257,13 +258,13 @@ export function MediaAttachmentSelector({
                     <div className="flex-shrink-0">
                       {attachment.type === 'video' ? (
                         <video
-                          src={attachment.preview}
+                          src={toLocalUrl(attachment.preview)}
                           className="w-16 h-16 object-cover rounded"
                           muted
                         />
                       ) : (
                         <img
-                          src={attachment.preview}
+                          src={toLocalUrl(attachment.preview)}
                           alt={attachment.file?.name || attachment.fileName || 'Image'}
                           className="w-16 h-16 object-cover rounded"
                         />

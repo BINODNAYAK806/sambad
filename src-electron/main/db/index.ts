@@ -121,98 +121,94 @@ export type CampaignMedia = {
 
 export function initDatabase(): any {
   if (db) return db;
-
-  const userDataPath = app.getPath('userData');
-  const dbPath = path.join(userDataPath, 'sambad.db');
-
-  console.log('[Sambad DB] Initializing database at:', dbPath);
-
-  if (!fs.existsSync(userDataPath)) {
-    fs.mkdirSync(userDataPath, { recursive: true });
+ 
+  try {
+    const userDataPath = app.getPath('userData');
+    const dbPath = path.join(userDataPath, 'sambad.db');
+ 
+    console.log('[Sambad DB] Initializing database at:', dbPath);
+    console.log('[Sambad DB] User Data Path:', userDataPath);
+ 
+    if (!fs.existsSync(userDataPath)) {
+      console.log('[Sambad DB] Creating directory:', userDataPath);
+      fs.mkdirSync(userDataPath, { recursive: true });
+    }
+ 
+    db = new BetterSqlite3(dbPath, { verbose: console.log });
+    db.pragma('journal_mode = WAL');
+    db.pragma('foreign_keys = ON');
+ 
+    console.log('[Sambad DB] Running createTables...');
+    createTables();
+    console.log('[Sambad DB] Running migrateSchema...');
+    migrateSchema();
+ 
+    console.log('[Sambad DB] Database initialized successfully');
+    return db;
+  } catch (error: any) {
+    console.error('[Sambad DB] CRITICAL ERROR during initDatabase:', error);
+    console.error('[Sambad DB] Error Stack:', error.stack);
+    throw error;
   }
-
-  db = new BetterSqlite3(dbPath);
-  db.pragma('journal_mode = WAL');
-  db.pragma('foreign_keys = ON');
-
-  createTables();
-  migrateSchema();
-
-  console.log('[Sambad DB] Database initialized successfully');
-  return db;
 }
 
 function migrateSchema() {
   if (!db) return;
 
-  // Add missing columns to campaigns if they don't exist
-  const tableInfo = db.prepare("PRAGMA table_info(campaigns)").all() as any[];
-  const columns = tableInfo.map(c => c.name);
+  // Map of table -> columns to add
+  const migrations: Record<string, { name: string, type: string, default?: string }[]> = {
+    campaigns: [
+      { name: 'template_image_path', type: 'TEXT' },
+      { name: 'template_image_name', type: 'TEXT' },
+      { name: 'template_image_size', type: 'INTEGER' },
+      { name: 'template_image_type', type: 'TEXT' },
+      { name: 'sent_count', type: 'INTEGER', default: '0' },
+      { name: 'failed_count', type: 'INTEGER', default: '0' },
+      { name: 'total_count', type: 'INTEGER', default: '0' },
+      { name: 'started_at', type: 'TEXT' },
+      { name: 'completed_at', type: 'TEXT' },
+      { name: 'sending_strategy', type: 'TEXT', default: "'single'" },
+      { name: 'server_id', type: 'INTEGER', default: '1' },
+      { name: 'is_poll', type: 'INTEGER', default: '0' },
+      { name: 'poll_question', type: 'TEXT' },
+      { name: 'poll_options', type: 'TEXT' }
+    ],
+    campaign_messages: [
+      { name: 'server_id', type: 'INTEGER' }
+    ]
+  };
 
-  if (!columns.includes('template_image_path')) {
-    console.log('[Sambad DB] Adding template_image_path to campaigns');
-    db.exec('ALTER TABLE campaigns ADD COLUMN template_image_path TEXT');
-  }
-  if (!columns.includes('template_image_name')) {
-    db.exec('ALTER TABLE campaigns ADD COLUMN template_image_name TEXT');
-  }
-  if (!columns.includes('template_image_size')) {
-    db.exec('ALTER TABLE campaigns ADD COLUMN template_image_size INTEGER');
-  }
-  if (!columns.includes('template_image_type')) {
-    db.exec('ALTER TABLE campaigns ADD COLUMN template_image_type TEXT');
-  }
+  for (const table in migrations) {
+    const tableInfo = db.prepare(`PRAGMA table_info(${table})`).all() as any[];
+    const existingColumns = tableInfo.map(c => c.name);
 
-  // Add count columns if they don't exist (for older databases)
-  if (!columns.includes('sent_count')) {
-    console.log('[Sambad DB] Adding sent_count to campaigns');
-    db.exec('ALTER TABLE campaigns ADD COLUMN sent_count INTEGER DEFAULT 0');
-  }
-  if (!columns.includes('failed_count')) {
-    console.log('[Sambad DB] Adding failed_count to campaigns');
-    db.exec('ALTER TABLE campaigns ADD COLUMN failed_count INTEGER DEFAULT 0');
-  }
-  if (!columns.includes('total_count')) {
-    console.log('[Sambad DB] Adding total_count to campaigns');
-    db.exec('ALTER TABLE campaigns ADD COLUMN total_count INTEGER DEFAULT 0');
-  }
-  if (!columns.includes('started_at')) {
-    console.log('[Sambad DB] Adding started_at to campaigns');
-    db.exec('ALTER TABLE campaigns ADD COLUMN started_at TEXT');
-  }
-  if (!columns.includes('completed_at')) {
-    console.log('[Sambad DB] Adding completed_at to campaigns');
-    db.exec('ALTER TABLE campaigns ADD COLUMN completed_at TEXT');
-  }
-
-  // Add multi-server and poll columns
-  if (!columns.includes('sending_strategy')) {
-    console.log('[Sambad DB] Adding sending_strategy to campaigns');
-    db.exec('ALTER TABLE campaigns ADD COLUMN sending_strategy TEXT DEFAULT \'single\'');
-  }
-  if (!columns.includes('server_id')) {
-    db.exec('ALTER TABLE campaigns ADD COLUMN server_id INTEGER DEFAULT 1');
-  }
-  if (!columns.includes('is_poll')) {
-    db.exec('ALTER TABLE campaigns ADD COLUMN is_poll INTEGER DEFAULT 0');
-  }
-  if (!columns.includes('poll_question')) {
-    db.exec('ALTER TABLE campaigns ADD COLUMN poll_question TEXT');
-  }
-  if (!columns.includes('poll_options')) {
-    console.log('[Sambad DB] Adding poll_options to campaigns');
-    db.exec('ALTER TABLE campaigns ADD COLUMN poll_options TEXT');
+    for (const col of migrations[table]) {
+      if (!existingColumns.includes(col.name)) {
+        try {
+          console.log(`[Sambad DB] Adding ${col.name} to ${table}`);
+          let sql = `ALTER TABLE ${table} ADD COLUMN ${col.name} ${col.type}`;
+          if (col.default !== undefined) {
+            sql += ` DEFAULT ${col.default}`;
+          }
+          db.exec(sql);
+          console.log(`[Sambad DB] Successfully added ${col.name} to ${table}`);
+        } catch (err: any) {
+          if (err.message.includes('duplicate column name')) {
+            console.log(`[Sambad DB] Column ${col.name} already exists in ${table} (handled)`);
+          } else {
+            console.error(`[Sambad DB] Failed to add ${col.name} to ${table}:`, err.message);
+          }
+        }
+      }
+    }
   }
 
-  // Add server_id to campaign_messages if it doesn't exist
-  const messageColumns = db.prepare('PRAGMA table_info(campaign_messages)').all().map((col: any) => col.name);
-  if (!messageColumns.includes('server_id')) {
-    console.log('[Sambad DB] Adding server_id to campaign_messages');
-    db.exec('ALTER TABLE campaign_messages ADD COLUMN server_id INTEGER');
+  // Ensure message index
+  try {
+    db.exec('CREATE INDEX IF NOT EXISTS idx_campaign_messages_server_id ON campaign_messages(server_id)');
+  } catch (err) {
+    console.error('[Sambad DB] Failed to create index on campaign_messages:', err);
   }
-
-  // Ensure index exists (safe to run after column is confirmed)
-  db.exec('CREATE INDEX IF NOT EXISTS idx_campaign_messages_server_id ON campaign_messages(server_id)');
 
   // Create table to track hard deletes - Ensure this exists before triggers
   db.exec(`
@@ -247,7 +243,32 @@ function migrateSchema() {
       db.exec(`ALTER TABLE ${table} ADD COLUMN last_synced_at TEXT`);
     }
   }
-
+ 
+  // Performance Indexes - ENSURE THESE EXIST
+  console.log('[Sambad DB] Ensuring performance indexes...');
+  const performanceIndexes = [
+    'CREATE INDEX IF NOT EXISTS idx_contacts_phone ON contacts(phone)',
+    'CREATE INDEX IF NOT EXISTS idx_campaigns_status ON campaigns(status)',
+    'CREATE INDEX IF NOT EXISTS idx_campaigns_server_id ON campaigns(server_id)',
+    'CREATE INDEX IF NOT EXISTS idx_campaigns_sending_strategy ON campaigns(sending_strategy)',
+    'CREATE INDEX IF NOT EXISTS idx_campaign_messages_campaign_id ON campaign_messages(campaign_id)',
+    'CREATE INDEX IF NOT EXISTS idx_campaign_messages_status ON campaign_messages(status)',
+    'CREATE INDEX IF NOT EXISTS idx_groups_name ON groups(name)',
+    'CREATE INDEX IF NOT EXISTS idx_group_contacts_group_id ON group_contacts(group_id)',
+    'CREATE INDEX IF NOT EXISTS idx_group_contacts_contact_id ON group_contacts(contact_id)',
+    'CREATE INDEX IF NOT EXISTS idx_campaign_media_campaign_id ON campaign_media(campaign_id)',
+    'CREATE INDEX IF NOT EXISTS idx_campaign_runs_campaign_id ON campaign_runs(campaign_id)',
+    'CREATE INDEX IF NOT EXISTS idx_campaign_runs_started_at ON campaign_runs(started_at)'
+  ];
+ 
+  for (const sql of performanceIndexes) {
+    try {
+      db.exec(sql);
+    } catch (err: any) {
+      console.warn('[Sambad DB] Index check failed (likely column missing yet):', sql);
+    }
+  }
+ 
   // Create AFTER DELETE triggers
   db.exec(`
     CREATE TRIGGER IF NOT EXISTS track_contact_delete
@@ -511,79 +532,6 @@ function createTables() {
   }
 
   console.log('[Sambad DB] Tables created successfully');
-
-  // Create indexes for performance optimization
-  console.log('[Sambad DB] Creating performance indexes...');
-
-  // Contacts indexes - phone is heavily queried
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_contacts_phone ON contacts(phone)`);
-
-  // Campaigns indexes - status and server_id are frequently filtered
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_campaigns_status ON campaigns(status)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_campaigns_server_id ON campaigns(server_id)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_campaigns_sending_strategy ON campaigns(sending_strategy)`);
-
-  // Campaign messages indexes - campaign_id is used in JOINs and WHERE clauses
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_campaign_messages_campaign_id ON campaign_messages(campaign_id)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_campaign_messages_status ON campaign_messages(status)`);
-
-
-
-  // Groups indexes - name is used in searches
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_groups_name ON groups(name)`);
-
-  // Group contacts indexes - both IDs used in JOINs
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_group_contacts_group_id ON group_contacts(group_id)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_group_contacts_contact_id ON group_contacts(contact_id)`);
-
-  // Campaign media indexes
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_campaign_media_campaign_id ON campaign_media(campaign_id)`);
-
-  // Campaign runs indexes
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_campaign_runs_campaign_id ON campaign_runs(campaign_id)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_campaign_runs_started_at ON campaign_runs(started_at)`);
-
-  // Create poll results tracking tables
-  console.log('[Sambad DB] Creating poll tracking tables...');
-
-  db.exec(`
-      CREATE TABLE IF NOT EXISTS poll_results (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        campaign_id INTEGER NOT NULL,
-        message_id TEXT UNIQUE NOT NULL,
-        poll_question TEXT NOT NULL,
-        poll_options TEXT NOT NULL,
-        total_votes INTEGER DEFAULT 0,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
-      )
-    `);
-
-  db.exec(`
-      CREATE TABLE IF NOT EXISTS poll_votes (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        poll_result_id INTEGER NOT NULL,
-        voter_jid TEXT NOT NULL,
-        voter_name TEXT,
-        voter_phone TEXT NOT NULL,
-        selected_option TEXT NOT NULL,
-        voted_at TEXT DEFAULT CURRENT_TIMESTAMP,
-        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE(poll_result_id, voter_jid),
-        FOREIGN KEY (poll_result_id) REFERENCES poll_results(id) ON DELETE CASCADE
-      )
-    `);
-
-  // Create indexes for poll tables
-  db.exec('CREATE INDEX IF NOT EXISTS idx_poll_results_campaign_id ON poll_results(campaign_id)');
-  db.exec('CREATE INDEX IF NOT EXISTS idx_poll_results_message_id ON poll_results(message_id)');
-  db.exec('CREATE INDEX IF NOT EXISTS idx_poll_votes_poll_result_id ON poll_votes(poll_result_id)');
-  db.exec('CREATE INDEX IF NOT EXISTS idx_poll_votes_voter_jid ON poll_votes(voter_jid)');
-
-  console.log('[Sambad DB] Poll tracking tables created successfully');
-
-  console.log('[Sambad DB] Performance indexes created successfully');
-
 }
 
 export function getSystemSetting(key: string): string | null {

@@ -42,6 +42,7 @@ export declare class WhatsAppClientSingleton {
     private setupEventListeners;
     disconnect(serverId?: number): Promise<void>;
     logout(serverId?: number): Promise<void>;
+    private waitForReady;
     sendMessage(serverId: number, chatId: string, content: string | any, options?: any): Promise<any>;
     sendPoll(serverId: number, chatId: string, question: string, options: string[]): Promise<any>;
     getNumberId(serverId: number, number: string): Promise<any>;
